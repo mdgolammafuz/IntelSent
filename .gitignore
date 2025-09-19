@@ -5,3 +5,4 @@ artifacts/
 datasets/
 .qa/
 .DS_Store
+sec-edgar-filings/
