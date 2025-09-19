@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pandas
+transformers
+torch
+sentence-transformers
+rank-bm25
+scikit-learn
+faiss-cpu
+peft
+requests
+langchain
+langchain-community
+langchain-core
+langchain-huggingface

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+artifacts/
+datasets/
+.qa/
+.DS_Store
