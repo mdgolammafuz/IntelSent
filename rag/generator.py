@@ -6,7 +6,8 @@ def get_generator():
     return pipeline("text2text-generation", model="google/flan-t5-small")
 
 PROMPT = (
-    "Answer strictly from the context. Cite doc_id when possible.\n\n"
+    "Answer strictly from the context. Use one short noun phrase (3–8 words). "
+    "If uncertain, say 'not found in context'.\n\n"
     "Context:\n{ctx}\n\nQuestion: {q}\nAnswer:"
 )
 
@@ -24,10 +25,17 @@ def _pack_context(chunks, tok, limit_tokens=480):
             break
     return "\n\n".join(parts)
 
-def generate_answer(context_chunks, question, max_new_tokens=128):
+def generate_answer(context_chunks, question, max_new_tokens=24):
     gen = get_generator()
     tok = gen.tokenizer
     ctx = _pack_context(context_chunks, tok, limit_tokens=480)
     text = PROMPT.format(ctx=ctx, q=question)
-    out = gen(text, max_new_tokens=max_new_tokens, do_sample=False, truncation=True)[0]["generated_text"]
+    out = gen(
+        text,
+        max_new_tokens=max_new_tokens,
+        do_sample=False,
+        truncation=True,
+        no_repeat_ngram_size=3,
+        repetition_penalty=1.2,
+    )[0]["generated_text"]
     return out.split("Answer:")[-1].strip()
