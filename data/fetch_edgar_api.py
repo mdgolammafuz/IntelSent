@@ -1,4 +1,3 @@
-
 import os, csv, re, time, json, requests
 from pathlib import Path
 from bs4 import BeautifulSoup

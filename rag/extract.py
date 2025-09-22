@@ -45,7 +45,7 @@ ALLOW_OPEX = re.compile(
     re.I,
 )
 
-# Groups to detect in the SUBJECT (the clause before "driven by")
+# SUBJECT groups detected before "driven by"
 SUBJECT_GROUPS: Dict[str, re.Pattern] = {
     "search": re.compile(r"\b(search|search and news advertising|advertising)\b", re.I),
     "office": re.compile(r"\b(office 365|microsoft 365|office|office commercial)\b", re.I),
@@ -55,7 +55,7 @@ SUBJECT_GROUPS: Dict[str, re.Pattern] = {
     "iphone": re.compile(r"\b(iphone)\b", re.I),
 }
 
-# What phrases indicate those same groups (in the CANDIDATE)
+# Candidate groups matched inside extracted phrase
 CAND_GROUPS: Dict[str, re.Pattern] = {
     "search": re.compile(r"\b(search|search and news advertising|advertising)\b", re.I),
     "office": re.compile(r"\b(office 365|microsoft 365|office commercial)\b", re.I),
@@ -65,7 +65,6 @@ CAND_GROUPS: Dict[str, re.Pattern] = {
     "iphone": re.compile(r"\b(iphone)\b", re.I),
 }
 
-# -------- Small helpers --------
 def _sentences(text: str):
     for s in _SENT_SPLIT.split(text):
         s = s.strip()
@@ -77,11 +76,7 @@ def _clean(phrase: str, max_words: int = 8) -> str:
     return " ".join(phrase.lower().split()[:max_words])
 
 def _tokens(s: str) -> List[Tuple[int, int, str]]:
-    toks = []
-    for m in re.finditer(r"\w+|\S", s):
-        a, b = m.span()
-        toks.append((a, b, m.group(0)))
-    return toks
+    return [(m.start(), m.end(), m.group(0)) for m in re.finditer(r"\w+|\S", s)]
 
 def _char_to_tok(toks: List[Tuple[int,int,str]], ch: int) -> int:
     for i, (a, b, _) in enumerate(toks):
@@ -104,9 +99,8 @@ def _nearest_anchor_within(sentence: str, anchor: re.Pattern, span: Tuple[int, i
 def _anchor_proximity_ok(sentence: str, category: Optional[str], span: Tuple[int, int]) -> bool:
     if category is None:
         return True
-    # Tighter window for revenue to avoid margin bleed
     if category == "revenue_driver":
-        return _nearest_anchor_within(sentence, _REV, span, win=8)
+        return _nearest_anchor_within(sentence, _REV, span, win=8)   # tighter for revenue
     if category == "margin_driver":
         return _nearest_anchor_within(sentence, _MARGIN, span, win=12)
     if category == "opex_driver":
@@ -140,35 +134,19 @@ def _candidate_groups(phrase: str) -> List[str]:
             groups.append(name)
     return groups
 
-def _score_phrase(phrase: str, category: Optional[str], ctx_rank: int, subj_groups: List[str]) -> float:
+def _score_phrase(phrase: str, category: Optional[str], ctx_rank: int) -> float:
     # Lower weight for context position so later good matches can win
-    score = 1.0 - min(ctx_rank * 0.05, 0.5)  # 1.0, 0.95, 0.90, ...
-    # Group alignment: if subject mentions "search", favor a candidate with "search"
-    cand_groups = _candidate_groups(phrase)
-    if subj_groups and cand_groups:
-        if any(g in cand_groups for g in subj_groups):
-            score += 0.8
-        # If subject is not cloud but candidate is cloud-only, slight penalty
-        if "cloud" in cand_groups and all(g != "cloud" for g in subj_groups):
-            score -= 0.4
+    return 1.0 - min(ctx_rank * 0.04, 0.4)  # 1.00, 0.96, 0.92, ...
 
-    if category == "revenue_driver":
-        # Prefer product-first phrases; penalize margin-ish words strongly
-        if re.match(r"^(azure|office|microsoft|windows|search|xbox|game pass|iphone|surface|linkedin|cloud|server)", phrase):
-            score += 0.3
-        if re.search(r"\b(margin|improvement|cost|pricing|mix)\b", phrase):
-            score -= 0.7
-    return score
-
-# -------- Main API --------
 def extract_driver(contexts: Iterable[str], category: Optional[str] = None) -> Optional[str]:
     """
     Extract a short 'driver' phrase from contexts.
-    - STRICT to the given category (no cross-category fallback).
-    - Requires proximity: the category anchor (e.g., 'revenue') must be within N tokens of the driver phrase.
-    - Scores candidates across top-k contexts with subject-aware boosting.
+    - STRICT to the given category.
+    - Requires proximity: category anchor (e.g., 'revenue') close to the driver phrase.
+    - Requires SUBJECT↔CANDIDATE group alignment for revenue (e.g., 'search' subject → 'search' candidate).
+    - Ranks candidates with light context bias.
     """
-    candidates: List[Tuple[float, str]] = []  # (score, phrase)
+    candidates: List[Tuple[float, str]] = []
 
     for ctx_i, ctx in enumerate(contexts):
         for sent in _sentences(ctx):
@@ -184,11 +162,17 @@ def extract_driver(contexts: Iterable[str], category: Optional[str] = None) -> O
                 if not _allowed_for_category(phrase, category):
                     continue
 
-                # Subject groups: words before "driven by"
-                subj = sent[: m.start()]
-                subj_groups = _subject_groups(subj)
+                # SUBJECT before "driven by"
+                subj_clause = sent[: m.start()]
+                subj_groups = _subject_groups(subj_clause)
+                cand_groups = _candidate_groups(phrase)
 
-                score = _score_phrase(phrase, category, ctx_rank=ctx_i, subj_groups=subj_groups)
+                # Hard alignment for revenue: if subject mentions a group, candidate must match it
+                if category == "revenue_driver" and subj_groups:
+                    if not any(g in cand_groups for g in subj_groups):
+                        continue
+
+                score = _score_phrase(phrase, category, ctx_rank=ctx_i)
                 candidates.append((score, phrase))
 
     if candidates:

@@ -1,4 +1,3 @@
-# rag/rerank.py
 from typing import List, Dict
 from sentence_transformers import CrossEncoder
 

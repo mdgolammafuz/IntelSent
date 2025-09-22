@@ -1,4 +1,3 @@
-# rag/retriever.py
 import os
 import pickle
 import re

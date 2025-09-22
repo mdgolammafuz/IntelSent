@@ -1,4 +1,3 @@
-# scripts/eval_driver.py
 import os
 import sys
 import re

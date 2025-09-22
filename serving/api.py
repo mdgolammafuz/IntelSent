@@ -13,17 +13,17 @@ from rag.driver import find_revenue_driver
 def create_app() -> FastAPI:
     app = FastAPI(title="IntelSent++ API", version="0.0.1")
 
-    # Expose /metrics before startup (avoids "Cannot add middleware after start")
+    # Expose /metrics before startup
     Instrumentator().instrument(app).expose(app)
 
     class QueryBody(BaseModel):
         text: str
         top_k: int = 5
         use_rerank: bool = True
-        company: str | None = None  # optional filter for deterministic scan
+        company: str | None = None  # optional filter for both paths
 
     class DriverBody(BaseModel):
-        company: str | None = None  # optional: "MSFT", "AAPL", etc.
+        company: str | None = None  # e.g., "MSFT", "AAPL"
 
     @app.on_event("startup")
     def on_startup():
@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
     @app.post("/driver")
     def driver(body: DriverBody):
         """
-        Deterministic corpus-wide scan for revenue driver sentences.
+        Deterministic corpus-wide scan for 'revenue ... driven by ...' sentences.
         Returns a short phrase and the supporting chunk, or 'not found'.
         """
         res = find_revenue_driver(company=body.company)
@@ -60,8 +60,9 @@ def create_app() -> FastAPI:
     ):
         """
         General RAG:
-        - If question looks like a 'revenue driver' query, try deterministic scan first (optional company filter).
-        - Else: retrieve -> optional rerank -> extract short phrase if applicable -> generator fallback.
+        - If looks like a 'revenue driver' query, try deterministic scan first (honors company).
+        - Else: retrieve -> optional rerank -> (strict company filter if provided) ->
+                extract short phrase if applicable -> generator fallback.
         """
         lower_q = body.text.lower()
 
@@ -72,7 +73,18 @@ def create_app() -> FastAPI:
 
         hits = retr.retrieve(body.text)
         docs = retr.docs_from_hits(hits)
-        docs = rr.rerank(body.text, docs, top_k=body.top_k) if body.use_rerank else docs[: body.top_k]
+
+        # Optional rerank
+        docs = rr.rerank(body.text, docs, top_k=max(body.top_k * 6, body.top_k)) if body.use_rerank else docs
+
+        # STRICT company filter if provided
+        if body.company:
+            filt = [d for d in docs if d["company"].lower() == body.company.lower()]
+            if filt:
+                docs = filt
+
+        # Trim to top_k after filtering
+        docs = docs[: body.top_k]
 
         ctx = [d["text"] for d in docs]
         extracted = extract_driver(ctx) if "revenue" in lower_q else None
