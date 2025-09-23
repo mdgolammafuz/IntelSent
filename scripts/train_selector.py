@@ -55,8 +55,8 @@ def evaluate_once(model, feat_names, X, y):
 
 def main():
     items = load_items(DATA)
-    retr = HybridRetriever(alpha=0.85, top_k=10000, candidate_pool=10000, bm25_pool=10000)
-    rr = CrossReranker()
+    retr = HybridRetriever(alpha=0.85, top_k=50, candidate_pool=400, bm25_pool=800)
+    rr = CrossReranker(batch_size=32, max_pairs=400)
 
     feat_names = [
         "bias","ctx_rank","ctx_rank_inv","ce_score","len_words","subj_any",
