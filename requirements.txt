@@ -14,3 +14,4 @@ langchain-community
 langchain-core
 langchain-huggingface
 sec-edgar-downloader
+PyYAML>=6.0

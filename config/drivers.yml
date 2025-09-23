@@ -1,0 +1,21 @@
+
+# Human-editable knobs: segments, canonical questions, and extraction patterns.
+
+segments:
+  cloud:    ["azure", "intelligent cloud", "other cloud services"]
+  office:   ["office 365", "microsoft 365", "office commercial"]
+  search:   ["search", "news advertising", "revenue per search"]
+  xbox:     ["xbox", "game pass"]
+  windows:  ["windows oem", "windows commercial", "windows"]
+  iphone:   ["iphone"]  # example cross-company segment for AAPL
+
+questions:
+  revenue_driver: "Which product or service was revenue growth driven by?"
+  margin_driver:  "What primarily improved gross margin?"
+  opex_driver:    "What primarily increased operating expenses?"
+
+# Regexes to capture short phrases after a driver cue.
+driver_regex:
+  - "(?:driven by|led by|primarily by|resulting from|due to|because of)\\s+([^.;:]+)"
+  - "increased\\s+[^.]*?\\bdriven by\\s+([^.;:]+)"
+  - "grew\\s+[^.]*?\\bdriven by\\s+([^.;:]+)"

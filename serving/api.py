@@ -1,199 +1,219 @@
+
 from __future__ import annotations
 
 import os
-from typing import List, Optional, Dict, Any
+import json
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+import yaml
+
+# local modules
 from rag.retriever import HybridRetriever
 from rag.rerank import CrossReranker
 from rag.extract import extract_driver
 from rag.generator import generate_answer
-from rag.selector import extract_candidates, load_selector
-from utils.canon import canonicalize
 
-# ---------- App ----------
-app = FastAPI(title="IntelSent SEC RAG", version="0.1.0")
+# ----- Load config -----
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CONFIG_PATH = os.path.join(BASE_DIR, "config", "drivers.yml")
 
-# Lazy-initialized singletons
-_retriever: Optional[HybridRetriever] = None
-_reranker: Optional[CrossReranker] = None
-_selector = None  # learned selector (optional)
+def load_config(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
-ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifacts")
-SELECTOR_PATH = os.path.join(ARTIFACTS_DIR, "selector.pkl")
+CONFIG: Dict[str, Any] = {}
 
+# ----- FastAPI -----
+app = FastAPI(title="IntelSent API", version="0.2")
 
-# ---------- Models ----------
 class QueryRequest(BaseModel):
     text: str
-    use_rerank: bool = True
-    top_k: int = 5
     company: Optional[str] = None
-    group_hint: Optional[str] = None  # "cloud"|"office"|"search"|"xbox"|"windows"|"iphone"
-
-
-class QueryResponse(BaseModel):
-    answer: str
-    chunks: List[Dict[str, Any]]
-    mode: str
-
+    year: Optional[int] = None
+    top_k: int = 5
+    use_rerank: bool = True
+    group_hint: Optional[str] = None  # e.g., "cloud", "search", etc.
 
 class DriverRequest(BaseModel):
     company: str
-    year: Optional[int] = None  # reserved for multi-year in future
+    year: Optional[int] = None
+    top_k: int = 8
 
+class IngestRequest(BaseModel):
+    companies: List[str]
+    years: List[int]
 
-class DriversBySegmentRequest(BaseModel):
-    company: str
-    top_k: int = 5  # how many chunks to scan
-    year: Optional[int] = None  # reserved
+def _retriever() -> HybridRetriever:
+    # light defaults
+    return HybridRetriever(alpha=0.85, top_k=50, candidate_pool=400, bm25_pool=800)
 
+def _reranker() -> CrossReranker:
+    return CrossReranker(batch_size=32, max_pairs=400)
 
-class DriversBySegmentResponse(BaseModel):
-    company: str
-    segments: Dict[str, Dict[str, Any]]  # segment -> {driver, chunk}
-    notes: Optional[str] = None
+def _filter_company_year(docs: List[Dict[str, Any]], company: Optional[str], year: Optional[int]) -> List[Dict[str, Any]]:
+    if company:
+        docs = [d for d in docs if str(d.get("company", "")).upper() == company.upper()] or docs
+    if year:
+        docs = [d for d in docs if int(d.get("year", 0)) == int(year)] or docs
+    return docs
 
-
-# ---------- Startup ----------
 @app.on_event("startup")
-def startup():
-    global _retriever, _reranker, _selector  # local module-level, not Python "global" state elsewhere
-    if _retriever is None:
-        # use same knobs you’ve been using during eval
-        _retriever = HybridRetriever(alpha=0.85, top_k=10000, candidate_pool=10000, bm25_pool=10000)
-    if _reranker is None:
-        _reranker = CrossReranker()
-    if _selector is None:
-        _selector = load_selector(SELECTOR_PATH)
+def startup() -> None:
+    global CONFIG
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError(f"Missing config file: {CONFIG_PATH}")
+    CONFIG = load_config(CONFIG_PATH)
 
+@app.get("/")
+def root() -> Dict[str, Any]:
+    return {"ok": True, "service": "IntelSent", "config_loaded": bool(CONFIG)}
 
-# ---------- Helpers ----------
-def _company_filter(docs: List[Dict[str, Any]], company: Optional[str]) -> List[Dict[str, Any]]:
-    if not company:
-        return docs
-    filtered = [d for d in docs if d.get("company") == company]
-    return filtered or docs
+@app.post("/query")
+def query(req: QueryRequest) -> Dict[str, Any]:
+    retr = _retriever()
+    rr = _reranker()
 
-def _prioritize_by_category(docs: List[Dict[str, Any]], category: str) -> List[Dict[str, Any]]:
-    import re
-    REV = re.compile(r"\b(revenue|sales)\b", re.I)
-    MARGIN = re.compile(r"\b(gross margin|margin)\b", re.I)
-    OPEX = re.compile(r"\b(operating expenses|opex|research and development|sales and marketing|general and administrative)\b", re.I)
-    DRV = re.compile(r"(driven by|led by|primarily by|resulting from|due to|because of)", re.I)
+    hits = retr.retrieve(req.text)
+    docs = retr.docs_from_hits(hits)
+    docs = _filter_company_year(docs, req.company, req.year)
 
-    def is_cat(d):
-        t = d["text"].lower()
-        if category == "revenue_driver":
-            return bool(REV.search(t) and DRV.search(t))
-        if category == "margin_driver":
-            return bool(MARGIN.search(t) and DRV.search(t))
-        if category == "opex_driver":
-            return bool(OPEX.search(t) and DRV.search(t))
-        return False
+    if req.use_rerank and docs:
+        docs = rr.rerank(req.text, docs, top_k=min(req.top_k * 3, len(docs)))
 
-    driver_docs = [d for d in docs if is_cat(d)]
-    seen = set()
-    out: List[Dict[str, Any]] = []
-    for d in driver_docs + docs:
-        key = (d["doc_id"], d["chunk_id"])
-        if key not in seen:
-            out.append(d)
-            seen.add(key)
+    # Prepare contexts
+    ctx = [d["text"] for d in docs[: req.top_k]]
+
+    # Extraction patterns from config
+    patterns = CONFIG.get("driver_regex", []) or []
+
+    # If the question likely asks a 'driver', try extractor first
+    answer = extract_driver(ctx, patterns)
+    mode = "rag"
+    if not answer:
+        # fall back to small generator for a concise phrase
+        answer = generate_answer(ctx, req.text) or "not found in context"
+
+    # Attach top chunks for citation
+    out_chunks = []
+    for d in docs[: req.top_k]:
+        out_chunks.append({
+            "chunk_id": d.get("chunk_id"),
+            "doc_id": d.get("doc_id"),
+            "company": d.get("company"),
+            "year": d.get("year"),
+            "score": d.get("score", None),
+            "text": d.get("text"),
+            "ce_score": d.get("ce_score", None),
+        })
+
+    return {
+        "answer": answer,
+        "chunks": out_chunks,
+        "mode": mode,
+    }
+
+@app.post("/driver")
+def driver(req: DriverRequest) -> Dict[str, Any]:
+    """
+    Convenience route: ask the canonical 'revenue_driver' question from config for a given company/year.
+    """
+    q = CONFIG.get("questions", {}).get("revenue_driver", "Which product or service was revenue growth driven by?")
+    q_req = QueryRequest(text=q, company=req.company, year=req.year, top_k=req.top_k, use_rerank=True)
+    return query(q_req)
+
+@app.post("/drivers_by_segment")
+def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
+    """
+    For each configured segment, try to extract a short driver phrase and cite the best chunk.
+    """
+    segments: Dict[str, List[str]] = CONFIG.get("segments", {}) or {}
+    patterns = CONFIG.get("driver_regex", []) or []
+    retr = _retriever()
+    rr = _reranker()
+
+    out: Dict[str, Any] = {"company": req.company, "segments": {}}
+
+    # For each segment, use the canonical revenue question, then prefer chunks matching any segment keywords
+    base_q = CONFIG.get("questions", {}).get("revenue_driver", "Which product or service was revenue growth driven by?")
+
+    for seg_name, keywords in segments.items():
+        hits = retr.retrieve(base_q)
+        docs = retr.docs_from_hits(hits)
+        docs = _filter_company_year(docs, req.company, req.year)
+        if not docs:
+            out["segments"][seg_name] = {"driver": None, "chunk": None}
+            continue
+
+        docs = rr.rerank(base_q, docs, top_k=min(max(8, req.top_k), len(docs)))
+
+        # Prefer a doc containing any keyword (case-insensitive)
+        pick = None
+        kl = [k.lower() for k in keywords]
+        for d in docs:
+            t = (d.get("text") or "").lower()
+            if any(k in t for k in kl):
+                pick = d
+                break
+        if not pick:
+            pick = docs[0]
+
+        phrase = extract_driver([pick["text"]], patterns) or ""
+        # If extractor missed, fall back to the first keyword found in the picked chunk
+        if not phrase:
+            low = (pick.get("text") or "").lower()
+            for k in kl:
+                if k in low:
+                    phrase = k
+                    break
+        # If still empty, use a minimal generator pass on top-3 docs for that segment
+        if not phrase:
+            phrase = generate_answer([d["text"] for d in docs[:3]], base_q)
+
+        out["segments"][seg_name] = {
+            "driver": phrase,
+            "chunk": {
+                "chunk_id": pick.get("chunk_id"),
+                "doc_id": pick.get("doc_id"),
+                "company": pick.get("company"),
+                "year": pick.get("year"),
+                "score": pick.get("score", None),
+                "text": pick.get("text"),
+                "ce_score": pick.get("ce_score", None),
+            },
+        }
+
+    out["notes"] = "Drivers are short phrases; see chunk for citation."
     return out
 
-def _answer_with_selector(question: str, docs: List[Dict[str, Any]], category: Optional[str], group_hint: Optional[str]) -> Optional[str]:
-    # Try learned selector first
-    cands = extract_candidates(docs, category)
-    if cands:
-        pred = _selector.select(cands, category, group_hint=group_hint)
-        if pred:
-            return pred
-    # Fallback: rule extractor → generator
-    ctx = [d["text"] for d in docs]
-    return extract_driver(ctx, category=category) or generate_answer(ctx, question) or ""
-
-# ---------- Routes ----------
-@app.get("/")
-def root():
-    return {"status": "ok", "service": "IntelSent SEC RAG"}
-
-@app.post("/query", response_model=QueryResponse)
-def query(req: QueryRequest):
-    q = req.text
-    hits = _retriever.retrieve(q)
-    docs = _retriever.docs_from_hits(hits)
-
-    if req.use_rerank:
-        docs = _reranker.rerank(q, docs, top_k=min(400, len(docs)))
-
-    docs = _company_filter(docs, req.company)
-    # generic Q&A path uses no strict category; but we still prefer revenue-style chunks first
-    docs = _prioritize_by_category(docs, category="revenue_driver")[: max(1, req.top_k)]
-
-    # try selector with optional group hint
-    ans = _answer_with_selector(q, docs, category="revenue_driver", group_hint=req.group_hint)
-    return QueryResponse(answer=ans, chunks=[{k: d[k] for k in d if k != "vector"} for d in docs], mode="rag")
-
-@app.post("/driver", response_model=QueryResponse)
-def driver(req: DriverRequest):
-    # Deterministic scan for the “headline” driver (fast path)
-    q = "Which product or service was revenue growth driven by?"
-    hits = _retriever.retrieve(q)
-    docs = _retriever.docs_from_hits(hits)
-    docs = _reranker.rerank(q, docs, top_k=min(400, len(docs)))
-    docs = _company_filter(docs, req.company)
-    # hard-prioritize driver-like sentences, then take one
-    docs = _prioritize_by_category(docs, category="revenue_driver")[:1]
-    if not docs:
-        return QueryResponse(answer="not found in context", chunks=[], mode="deterministic-scan")
-    # extract short phrase from the top chunk only
-    ans = _answer_with_selector(q, docs, category="revenue_driver", group_hint=None)
-    return QueryResponse(answer=ans or "not found in context", chunks=[{k: docs[0][k] for k in docs[0] if k != "vector"}], mode="deterministic-scan")
-
-@app.post("/drivers_by_segment", response_model=DriversBySegmentResponse)
-def drivers_by_segment(req: DriversBySegmentRequest):
+@app.post("/ingest")
+def ingest(req: IngestRequest) -> Dict[str, Any]:
     """
-    Return short 'drivers' per major segment for a company (e.g., cloud/office/search/xbox/windows/iphone),
-    with the supporting chunk as citation.
+    Optional convenience to fetch->chunk->embed within one call.
     """
-    q = "Which product or service was revenue growth driven by?"
-    hits = _retriever.retrieve(q)
-    docs = _retriever.docs_from_hits(hits)
-    docs = _reranker.rerank(q, docs, top_k=min(600, len(docs)))
-    docs = _company_filter(docs, req.company)
-    docs = _prioritize_by_category(docs, category="revenue_driver")[: max(5, req.top_k)]
+    import subprocess, shlex
 
-    # Define segments and hints
-    segments = ["cloud", "office", "search", "xbox", "windows", "iphone"]
-    out: Dict[str, Dict[str, Any]] = {}
+    comps = req.companies
+    years = [str(y) for y in req.years]
 
-    for seg in segments:
-        # filter candidates to those containing the seg term to improve precision
-        seg_docs = []
-        for d in docs:
-            t = d["text"].lower()
-            if seg == "cloud" and ("azure" in t or "cloud services" in t or "intelligent cloud" in t):
-                seg_docs.append(d)
-            elif seg == "office" and ("office 365" in t or "microsoft 365" in t or "office commercial" in t):
-                seg_docs.append(d)
-            elif seg == "search" and ("search" in t or "news advertising" in t):
-                seg_docs.append(d)
-            elif seg == "xbox" and ("xbox" in t or "game pass" in t):
-                seg_docs.append(d)
-            elif seg == "windows" and ("windows oem" in t or "windows commercial" in t or "windows revenue" in t):
-                seg_docs.append(d)
-            elif seg == "iphone" and ("iphone" in t):
-                seg_docs.append(d)
+    cmds = [
+        f'python {os.path.join(BASE_DIR, "data", "fetch_edgar_api.py")} --companies {" ".join(comps)} --years {" ".join(years)}',
+        f'python {os.path.join(BASE_DIR, "data", "chunker.py")}',
+        f'python {os.path.join(BASE_DIR, "data", "embedder.py")}',
+    ]
 
-        subset = seg_docs or docs
-        ans = _answer_with_selector(q, subset, category="revenue_driver", group_hint=seg)
-        if ans:
-            out[seg] = {
-                "driver": canonicalize(ans),
-                "chunk": {k: subset[0][k] for k in subset[0] if k != "vector"} if subset else None,
-            }
+    steps = []
+    for c in cmds:
+        p = subprocess.run(shlex.split(c), capture_output=True, text=True)
+        steps.append({
+            "cmd": c,
+            "returncode": p.returncode,
+            "stdout": p.stdout[-4000:],
+            "stderr": p.stderr[-2000:],
+        })
+        if p.returncode != 0:
+            break
 
-    return DriversBySegmentResponse(company=req.company, segments=out, notes="Drivers are short phrases; see chunk for citation.")
+    return {"steps": steps}
