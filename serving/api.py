@@ -29,6 +29,11 @@ CONFIG: Dict[str, Any] = {}
 # ----- FastAPI -----
 app = FastAPI(title="IntelSent API", version="0.2")
 
+# wiring ingest_router
+
+from serving.ingest_runner import router as ingest_router
+app.include_router(ingest_router)
+
 class QueryRequest(BaseModel):
     text: str
     company: Optional[str] = None

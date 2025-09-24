@@ -1,0 +1,30 @@
+# === App / Paths ===
+artifacts_dir: artifacts
+
+# === Artifacts created by /ingest/sec ===
+sec_faiss_index: artifacts/sec_faiss.index
+sec_chunks_meta: artifacts/chunks.pkl
+
+# === Embedding (for query encoding) ===
+embedding:
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: auto   # one of: auto | cpu | cuda | mps
+
+# === Reranker ===
+rerank:
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+  device: auto   # one of: auto | cpu | cuda | mps
+
+# === Retrieval ===
+retrieval:
+  top_k: 5
+  max_k: 20
+
+# === Generation (we’re not calling an LLM; just limit context) ===
+generation:
+  max_context_chars: 4000
+
+# === Optional metadata filters ===
+filters:
+  company: null  # e.g. "MSFT"
+  year: null     # e.g. 2022
