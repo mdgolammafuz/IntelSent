@@ -1,124 +1,201 @@
+
 from __future__ import annotations
 
 import os
-import textwrap
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import yaml
-
 from .retriever import FAISSLocalRetriever
-from .rerank import CrossEncoderReranker
+from .rerank import CrossEncoderReranker, compress_with_reranker
+
+# LangChain (optional)
+HAS_LC = True
+try:
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_core.runnables import RunnableLambda, RunnableMap
+    from langchain_openai import ChatOpenAI
+except Exception:
+    HAS_LC = False
 
 
 @dataclass
 class AppConfig:
     artifacts_dir: str
-    faiss_index: str
-    chunks_meta: str
-
-    embed_model: str
-    embed_device: str
-
-    top_k: int
-    max_k: int
-
-    rerank_enabled: bool
-    rerank_model: str
-    rerank_top_n: int
-
-    max_context_chars: int
-
-
-def _join(base: str, rel: str) -> str:
-    return rel if os.path.isabs(rel) else os.path.join(base, rel)
+    embedding_model: str
+    embedding_device: str
+    retrieval_top_k: int
+    retrieval_max_k: int
+    generation_max_context_chars: int
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 def load_config(cfg_path: str) -> AppConfig:
     with open(cfg_path, "r") as f:
-        raw = yaml.safe_load(f) or {}
+        cfg = json.load(f) if cfg_path.endswith(".json") else _load_yaml_compat(f.read())
 
-    artifacts_dir = raw.get("artifacts_dir", "artifacts")
-    faiss_index = _join(artifacts_dir, raw.get("faiss_index", "sec_faiss.index"))
-    chunks_meta = _join(artifacts_dir, raw.get("chunks_meta", "chunks.pkl"))
-
-    emb = raw.get("embedding", {}) or {}
-    retrieval = raw.get("retrieval", {}) or {}
-    rerank = raw.get("rerank", {}) or {}
-    gen = raw.get("generation", {}) or {}
+    if "artifacts_dir" not in cfg:
+        raise KeyError("Missing 'artifacts_dir' in config.")
+    embed_cfg = cfg.get("embedding", {})
+    retrieval_cfg = cfg.get("retrieval", {})
+    gen_cfg = cfg.get("generation", {})
 
     return AppConfig(
-        artifacts_dir=artifacts_dir,
-        faiss_index=faiss_index,
-        chunks_meta=chunks_meta,
-        embed_model=emb.get("model_name", "sentence-transformers/all-MiniLM-L6-v2"),
-        embed_device=emb.get("device", "auto"),
-        top_k=int(retrieval.get("top_k", 5)),
-        max_k=int(retrieval.get("max_k", 20)),
-        rerank_enabled=bool(rerank.get("enabled", True)),
-        rerank_model=rerank.get("model_name", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
-        rerank_top_n=int(rerank.get("top_n", 5)),
-        max_context_chars=int(gen.get("max_context_chars", 4000)),
+        artifacts_dir=cfg["artifacts_dir"],
+        embedding_model=embed_cfg.get("model_name", "sentence-transformers/all-MiniLM-L6-v2"),
+        embedding_device=embed_cfg.get("device", "cpu"),
+        retrieval_top_k=int(retrieval_cfg.get("top_k", 5)),
+        retrieval_max_k=int(retrieval_cfg.get("max_k", max(10, int(retrieval_cfg.get("top_k", 5))))),
+        generation_max_context_chars=int(gen_cfg.get("max_context_chars", 6000)),
+        rerank_model=cfg.get("rerank", {}).get("model_name", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
     )
 
 
-class SimpleRAGChain:
-    def __init__(self, cfg: AppConfig):
-        self.cfg = cfg
-        self.retriever = FAISSLocalRetriever(
-            faiss_index_path=cfg.faiss_index,
-            chunks_meta_path=cfg.chunks_meta,
-            embed_model_name=cfg.embed_model,
-            embed_device=cfg.embed_device,
-            default_top_k=cfg.top_k,
-            max_k=cfg.max_k,
-        )
-        self.reranker: Optional[CrossEncoderReranker] = None
-        if cfg.rerank_enabled:
-            self.reranker = CrossEncoderReranker(
-                model_name=cfg.rerank_model, top_n=cfg.rerank_top_n
-            )
+def _load_yaml_compat(text: str) -> Dict[str, Any]:
+    try:
+        import yaml
+        return yaml.safe_load(text) or {}
+    except Exception:
+        data: Dict[str, Any] = {}
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or ":" not in line:
+                continue
+            k, v = line.split(":", 1)
+            data[k.strip()] = _coerce(v.strip())
+        return data
 
-    # main API
-    def run(
+
+def _coerce(v: str) -> Any:
+    if v.lower() in {"true", "false"}:
+        return v.lower() == "true"
+    try:
+        return int(v)
+    except Exception:
+        return v
+
+
+class SimpleChain:
+    """
+    Retrieval -> (CrossEncoder reranker) -> Prompt -> LLM (optional)
+    Gracefully falls back to extractive answer (top reranked chunk) when LLM unavailable or errors (429, etc).
+    """
+
+    def __init__(
         self,
-        question: str,
-        company: Optional[str],
-        year: Optional[int],
-        top_k: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        hits = self.retriever.search(
-            query=question, company=company, year=year, top_k=top_k
+        retriever: FAISSLocalRetriever,
+        reranker: CrossEncoderReranker,
+        cfg: AppConfig,
+        use_lcel: bool = True,
+    ):
+        self.retriever = retriever
+        self.reranker = reranker
+        self.cfg = cfg
+
+        # use_lcel is allowed only if LC and OPENAI are available AND user didn't force disable
+        self.has_openai = bool(os.environ.get("OPENAI_API_KEY")) and HAS_LC
+        self.use_lcel = bool(use_lcel and self.has_openai)
+
+        self.prompt = None
+        self.llm = None
+        if self.use_lcel:
+            self._init_lcel()
+
+    def _init_lcel(self):
+        self.prompt = ChatPromptTemplate.from_template(
+            "Answer concisely and ONLY using the provided context. If unsure, say you don't know.\n\n"
+            "Context:\n{context}\n\nQ: {question}\n"
+        )
+        self.llm = ChatOpenAI(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0.0")),
         )
 
-        if self.reranker and hits:
-            hits = self.reranker.rerank(question, hits)
+        def _retrieve(inputs: Dict[str, Any]) -> List[Dict[str, Any]]:
+            q = inputs["question"]
+            company = inputs.get("company")
+            year = inputs.get("year")
+            k = int(inputs.get("k") or self.cfg.retrieval_max_k)
+            docs = self.retriever.search(q, company=company, year=year, top_k=k)
+            return docs
 
-        contexts = [h["text"] for h in hits]
-        context_blob = "\n\n---\n\n".join(contexts)
-        if len(context_blob) > self.cfg.max_context_chars:
-            context_blob = context_blob[: self.cfg.max_context_chars]
+        def _compress(inputs: Dict[str, Any]) -> List[Dict[str, Any]]:
+            q = inputs["question"]
+            docs = inputs["docs"]
+            top_k = int(inputs.get("top_k") or self.cfg.retrieval_top_k)
+            return compress_with_reranker(q, docs, self.reranker, k=top_k)
 
-        answer = hits[0]["text"] if hits else "No relevant context found."
+        def _format_ctx(inputs: Dict[str, Any]) -> str:
+            docs = inputs["compressed_docs"]
+            text = "\n\n".join(d["text"] for d in docs)
+            if len(text) > self.cfg.generation_max_context_chars:
+                text = text[: self.cfg.generation_max_context_chars]
+            return text
 
-        return {
-            "answer": answer.strip(),
-            "contexts": contexts,
-            "n_contexts": len(contexts),
-            "meta": {"company": company, "year": year},
-        }
+        self.retrieve_runnable = RunnableLambda(_retrieve)
+        self.compress_runnable = RunnableLambda(_compress)
+        self.format_ctx_runnable = RunnableLambda(_format_ctx)
 
-    # allow callable usage for older callers
-    def __call__(self, *args, **kwargs):
-        return self.run(*args, **kwargs)
+        self.pipeline = (
+            RunnableMap({
+                "question": RunnableLambda(lambda x: x["question"]),
+                "company": RunnableLambda(lambda x: x.get("company")),
+                "year": RunnableLambda(lambda x: x.get("year")),
+                "k": RunnableLambda(lambda x: x.get("k")),
+                "top_k": RunnableLambda(lambda x: x.get("top_k")),
+            })
+            | RunnableLambda(lambda x: {"question": x["question"], "docs": self.retrieve_runnable.invoke(x)})
+            | RunnableLambda(lambda x: {**x, "compressed_docs": self.compress_runnable.invoke({"question": x["question"], "docs": x["docs"], "top_k": x.get("top_k")})})
+            | RunnableLambda(lambda x: {**x, "context": self.format_ctx_runnable.invoke({"compressed_docs": x["compressed_docs"]})})
+            | RunnableLambda(lambda x: {"prompt": self.prompt.format(context=x["context"], question=x["question"]), **x})
+        )
+
+    def _extractive_answer(self, question: str, company: Optional[str], year: Optional[int], top_k: int) -> Dict[str, Any]:
+        docs = self.retriever.search(question, company=company, year=year, top_k=self.cfg.retrieval_max_k)
+        top_docs = compress_with_reranker(question, docs, self.reranker, k=top_k or self.cfg.retrieval_top_k)
+        answer = top_docs[0]["text"] if top_docs else ""
+        contexts = [d["text"] for d in top_docs]
+        return {"answer": answer, "contexts": contexts, "meta": {"company": company, "year": year}}
+
+    def invoke(self, question: str, company: Optional[str], year: Optional[int], top_k: int) -> Dict[str, Any]:
+        # If LCEL disabled or no OpenAI, do extractive path
+        if not self.use_lcel or self.llm is None or self.prompt is None:
+            return self._extractive_answer(question, company, year, top_k)
+
+        # LCEL path with runtime fallback
+        try:
+            inputs = {
+                "question": question,
+                "company": company,
+                "year": year,
+                "k": self.cfg.retrieval_max_k,
+                "top_k": top_k or self.cfg.retrieval_top_k,
+            }
+            stage = self.pipeline.invoke(inputs)
+            prompt_val = stage["prompt"]
+            compressed_docs = stage["compressed_docs"]
+            resp = self.llm.invoke(prompt_val)  # may raise due to 429/quotas
+            answer = getattr(resp, "content", str(resp))
+            contexts = [d["text"] for d in compressed_docs]
+            return {"answer": answer, "contexts": contexts, "meta": {"company": company, "year": year}}
+        except Exception as e:
+            # Fallback gracefully on any LLM error (429, timeouts, etc.)
+            # Optional: log to stderr for visibility
+            print(f"[warn] LLM failed ({type(e).__name__}): {e}. Falling back to extractive answer.", flush=True)
+            self.use_lcel = False
+            return self._extractive_answer(question, company, year, top_k)
+
+    def run(self, question: str, company: Optional[str] = None, year: Optional[int] = None, top_k: int = 5) -> Dict[str, Any]:
+        return self.invoke(question, company, year, top_k)
 
 
-# ---- backward-compat shim ----
-# Some older code may import/instantiate `_SimpleChain`. Make it an alias.
-class _SimpleChain(SimpleRAGChain):
-    pass
-
-
-def load_chain(cfg_path: str) -> SimpleRAGChain:
+def load_chain(cfg_path: str, use_lcel: bool = True) -> SimpleChain:
     cfg = load_config(cfg_path)
-    return SimpleRAGChain(cfg)
+    retriever = FAISSLocalRetriever(
+        faiss_index_path=os.path.join(cfg.artifacts_dir, "sec_faiss.index"),
+        chunks_meta_path=os.path.join(cfg.artifacts_dir, "chunks.pkl"),
+        embed_model=cfg.embedding_model,
+        embed_device=cfg.embedding_device,
+    )
+    reranker = CrossEncoderReranker(model_name=cfg.rerank_model, top_k=cfg.retrieval_top_k)
+    return SimpleChain(retriever=retriever, reranker=reranker, cfg=cfg, use_lcel=use_lcel)

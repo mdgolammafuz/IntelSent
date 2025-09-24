@@ -1,35 +1,71 @@
+
 from __future__ import annotations
 
-from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
+from typing import List, Dict, Any, Tuple
 
-from pydantic import BaseModel, Field, PrivateAttr
-from pydantic.config import ConfigDict
-from sentence_transformers import CrossEncoder
+try:
+    from sentence_transformers import CrossEncoder  # optional, cached earlier
+    HAS_CE = True
+except Exception:
+    HAS_CE = False
 
 
-class CrossEncoderReranker(BaseModel):
-    model_name: str = Field(default="cross-encoder/ms-marco-MiniLM-L-6-v2")
-    top_n: int = Field(default=5)
+@dataclass
+class RerankResult:
+    text: str
+    score: float
+    meta: Dict[str, Any]
 
-    _model: Optional[CrossEncoder] = PrivateAttr(default=None)
 
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        protected_namespaces=(),  # allow underscore private attrs
-    )
+class CrossEncoderReranker:
+    """
+    CrossEncoder-based re-ranker.
+    Falls back to a trivial 'keep order' if CrossEncoder isn't available.
+    """
 
-    def model_post_init(self, __context: Any) -> None:
-        self._model = CrossEncoder(self.model_name)
+    model_name: str
+    top_k: int
 
-    def rerank(self, query: str, docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", top_k: int = 5):
+        self.model_name = model_name
+        self.top_k = top_k
+        self.model = None
+        if HAS_CE:
+            try:
+                self.model = CrossEncoder(self.model_name)
+            except Exception:
+                self.model = None  # fallback gracefully
+
+    def rerank(self, query: str, docs: List[Dict[str, Any]], top_k: int | None = None) -> List[RerankResult]:
+        if top_k is None:
+            top_k = self.top_k
+
         if not docs:
-            return docs
-        assert self._model is not None
-        pairs = [(query, d.get("text", "")) for d in docs]
-        scores = self._model.predict(pairs)
-        for d, s in zip(docs, scores):
-            d["rerank_score"] = float(s)
-        docs_sorted = sorted(
-            docs, key=lambda x: x.get("rerank_score", 0.0), reverse=True
-        )
-        return docs_sorted[: min(self.top_n, len(docs_sorted))]
+            return []
+
+        # docs expected: [{"text": "...", "meta": {...}}, ...]
+        pairs = [(query, d["text"]) for d in docs]
+
+        if self.model is None:
+            # Fallback: preserve order, add dummy score
+            scored: List[Tuple[float, Dict[str, Any]]] = [(1.0, d) for d in docs]
+        else:
+            scores = self.model.predict(pairs, batch_size=32, convert_to_numpy=True)
+            scored = list(zip(scores, docs))
+
+        scored.sort(key=lambda x: float(x[0]), reverse=True)
+        top = scored[: top_k]
+        return [
+            RerankResult(text=d["text"], score=float(s), meta=d.get("meta", {}))
+            for (s, d) in top
+        ]
+
+
+def compress_with_reranker(query: str, docs: List[Dict[str, Any]], reranker: CrossEncoderReranker, k: int) -> List[Dict[str, Any]]:
+    """
+    'Contextual compression' via re-ranking + cut to top-k.
+    Returns the same doc shape used throughout: {"text": str, "meta": {...}}
+    """
+    ranked = reranker.rerank(query, docs, top_k=k)
+    return [{"text": r.text, "meta": r.meta} for r in ranked]
