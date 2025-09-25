@@ -1,49 +1,62 @@
 
-import os, sys
+from __future__ import annotations
+
+import os,sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import argparse
+from typing import Any, Dict, List
+
 from rag.chain import load_chain
 
-# Silence HF tokenizer fork warnings
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--q", required=True)
-    p.add_argument("--company", default=None)
-    p.add_argument("--year", type=int, default=None)
-    p.add_argument("--top-k", type=int, default=5, dest="top_k")
-    p.add_argument("--config", default="config/app.yaml")
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Quick test runner for the RAG chain")
+    p.add_argument("--q", required=True, help="Question to ask")
+    p.add_argument("--company", default=None, help="Company ticker, e.g. MSFT")
+    p.add_argument("--year", type=int, default=None, help="Filing year, e.g. 2022")
+    p.add_argument("--top-k", type=int, default=5, help="Top-k chunks")
+    p.add_argument("--config", default="config/app.yaml", help="Path to YAML config")
     p.add_argument(
         "--no-openai",
         action="store_true",
-        help="Force local extractive mode (no OpenAI)."
+        help="Force local (no-LLM) answer even if OPENAI_API_KEY is set",
     )
-    args = p.parse_args()
+    return p.parse_args()
 
-    # Force no-OpenAI mode if flag is set
-    use_lcel = not args.no_openai
 
-    chain = load_chain(args.config, use_lcel=use_lcel)
+def main() -> None:
+    args = parse_args()
 
-    result = chain.run(args.q, company=args.company, year=args.year, top_k=args.top_k)
+    # Create chain from config
+    chain = load_chain(args.config)
 
+    # If the user passed --no-openai, force local answering path
+    if args.no_openai:
+        chain.use_openai = False
+
+    # Run the query
+    result: Dict[str, Any] = chain.run(
+        question=args.q,
+        company=args.company,
+        year=args.year,
+        top_k=args.top_k,
+    )
+
+    # Pretty-print
     print("\n=== ANSWER ===")
-    print(result.get("answer", "").strip())
+    print(result.get("answer", ""))
 
-    ctxs = result.get("contexts", []) or []
-    if ctxs:
-        print("\n=== CONTEXTS (top) ===")
-        for i, c in enumerate(ctxs[: args.top_k], 1):
-            short = (c[:300] + "...") if len(c) > 300 else c
-            short_one_line = short.replace("\n", " ")
-            print(f"[{i}] {short_one_line}")
+    contexts: List[str] = result.get("contexts", [])
+    print("\n=== CONTEXTS (top) ===")
+    for i, c in enumerate(contexts[:5], start=1):
+        # Precompute short to avoid f-string backslash pitfalls on some shells
+        short = c[:300].replace("\n", " ")
+        suffix = "..." if len(c) > 300 else ""
+        print(f"[{i}] {short}{suffix}")
 
-    meta = result.get("meta", {})
-    if meta:
-        print("\n=== META ===")
-        print(meta)
+    print("\n=== META ===")
+    print(result.get("meta", {}))
 
 
 if __name__ == "__main__":

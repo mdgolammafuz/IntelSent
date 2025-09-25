@@ -2,257 +2,269 @@
 from __future__ import annotations
 
 import os
-import json
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+import numpy as np
+import psycopg
+from sentence_transformers import SentenceTransformer
 
 
-# ---------------------------
-# Utility: load YAML config
-# ---------------------------
-def load_config(cfg_path: str) -> Dict[str, Any]:
-    with open(cfg_path, "r") as f:
-        cfg = yaml.safe_load(f) or {}
-
-    # sensible defaults so missing keys don't crash the app
-    cfg.setdefault("artifacts_dir", "artifacts")
-
-    # embedding defaults
-    cfg.setdefault("embedding", {})
-    cfg["embedding"].setdefault("model_name", "sentence-transformers/all-MiniLM-L6-v2")
-    cfg["embedding"].setdefault("device", "mps")
-
-    # retrieval defaults
-    cfg.setdefault("retrieval", {})
-    cfg["retrieval"].setdefault("top_k", 5)
-    cfg["retrieval"].setdefault("max_k", 10)
-
-    # generation defaults
-    cfg.setdefault("generation", {})
-    cfg["generation"].setdefault("max_context_chars", 6000)
-    cfg["generation"].setdefault("model", "gpt-4o-mini")
-    cfg["generation"].setdefault("use_openai", True)  # you can disable via CLI/script
-
-    # rerank defaults (not required)
-    cfg.setdefault("rerank", {})
-    cfg["rerank"].setdefault("enabled", False)
-    cfg["rerank"].setdefault("model_name", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-
-    # pgvector defaults
-    cfg.setdefault("pgvector", {})
-    cfg["pgvector"].setdefault("enabled", False)
-    cfg["pgvector"].setdefault("conn", "postgresql://intel:intel@localhost:5432/intelrag")
-    cfg["pgvector"].setdefault("table", "chunks")
-    # IMPORTANT: set your actual text column name here (e.g., "content" or "chunk")
-    cfg["pgvector"].setdefault("text_col", "content")
-
-    return cfg
+# ---------- tiny config helpers ----------
+def _get(d: Dict[str, Any], path: str, default: Any = None) -> Any:
+    cur: Any = d
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return default
+        cur = cur[part]
+    return cur
 
 
-# ---------------------------
-# Embedder
-# ---------------------------
-@dataclass
-class Embedder:
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    device: str = "cpu"
-
-    def __post_init__(self):
-        from sentence_transformers import SentenceTransformer
-
-        self._model = SentenceTransformer(self.model_name, device=self.device)
-
-    @property
-    def dim(self) -> int:
-        # trigger a single encode to get the dimensionality
-        v = self.encode(["test"])[0]
-        return len(v)
-
-    def encode(self, texts: List[str]) -> List[List[float]]:
-        import numpy as np
-
-        embs = self._model.encode(
-            texts,
-            batch_size=32,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
-        return [e.tolist() for e in embs]
+def _load_yaml(path: str) -> Dict[str, Any]:
+    with open(path, "r") as f:
+        return yaml.safe_load(f) or {}
 
 
-# ---------------------------
-# PGVector retriever (configurable text column)
-# ---------------------------
-@dataclass
+def load_chain(cfg_path: str) -> "_SimpleChain":
+    cfg = _load_yaml(cfg_path)
+
+    # Embedding
+    embed_model = _get(cfg, "embedding.model_name", "sentence-transformers/all-MiniLM-L6-v2")
+    embed_device = _get(cfg, "embedding.device", "cpu")  # "mps" ok on Apple
+
+    # pgvector
+    pg_dsn = _get(cfg, "pgvector.dsn", "postgresql://intel:intel@localhost:5432/intelrag")
+    table = _get(cfg, "pgvector.table", "chunks")
+    text_col_pref = _get(cfg, "pgvector.text_column", None)  # if you know it, set it; else autodetect
+
+    # generation
+    max_context_chars = int(_get(cfg, "generation.max_context_chars", 6000))
+
+    # retrieval extras
+    rerank_keep = int(_get(cfg, "retrieval.rerank_keep", 5))
+
+    retriever = PGVectorRetriever(
+        dsn=pg_dsn,
+        table=table,
+        text_col_pref=text_col_pref,
+        embed_model=embed_model,
+        embed_device=embed_device,
+    )
+
+    chain = _SimpleChain(
+        retriever=retriever,
+        max_context_chars=max_context_chars,
+        rerank_keep=rerank_keep,
+        use_openai=_env_has_openai() and not _env_force_no_openai(),
+    )
+    return chain
+
+
+def _env_has_openai() -> bool:
+    return bool(os.environ.get("OPENAI_API_KEY"))
+
+
+def _env_force_no_openai() -> bool:
+    return os.environ.get("NO_OPENAI", "").lower() in {"1", "true", "yes"}
+
+
+# ---------- pgvector retriever ----------
 class PGVectorRetriever:
-    conn_str: str
-    table: str = "chunks"
-    text_col: str = "content"  # <-- configurable column with the chunk text
-    embedder: Optional[Embedder] = None
+    """
+    - Embeds query with SentenceTransformers
+    - Filters by (company, year) when provided
+    - Uses <-> with a vector literal cast (%s::vector)
+    - Auto-detects the text column if not provided
+    """
 
-    def get_relevant(
+    _CANDIDATE_TEXT_COLS = ["chunk", "content", "text", "passage", "body"]
+
+    def __init__(
         self,
-        query: str,
-        company: Optional[str],
-        year: Optional[int],
-        k: int,
-    ) -> List[Dict[str, Any]]:
-        """
-        Cosine ANN with pgvector: ORDER BY embedding <-> %s::vector
-        We pass the query embedding as a vector parameter.
-        """
-        if self.embedder is None:
-            raise RuntimeError("PGVectorRetriever requires an embedder")
+        dsn: str,
+        table: str,
+        text_col_pref: Optional[str],
+        embed_model: str,
+        embed_device: str = "cpu",
+    ) -> None:
+        self.dsn = dsn
+        self.table = table
+        self._embedder = SentenceTransformer(embed_model, device=embed_device)
 
-        q_vec = self.embedder.encode([query])[0]  # 384-d for MiniLM
+        # figure out the text column once
+        self.text_col = self._resolve_text_column(text_col_pref)
 
-        # Build SQL selecting *configured* text column and alias to 'chunk'
-        sql = f"""
-        SELECT id, company, year, {self.text_col} AS chunk
-        FROM {self.table}
-        WHERE (company = COALESCE(%s, company))
-          AND (year = COALESCE(%s, year))
-        ORDER BY embedding <-> %s
-        LIMIT %s;
-        """
-
-        import psycopg
-
-        with psycopg.connect(self.conn_str) as conn:
-            with conn.cursor() as cur:
-                # parameters: company, year, query_vector, k
-                cur.execute(sql, (company, year, q_vec, k))
-                rows = cur.fetchall()
-
-        hits = [
-            {
-                "id": r[0],
-                "company": r[1],
-                "year": r[2],
-                "chunk": r[3],
-            }
-            for r in rows
-        ]
-        return hits
-
-
-# ---------------------------
-# Simple chain
-# ---------------------------
-@dataclass
-class SimpleChain:
-    retriever: PGVectorRetriever
-    embedder: Embedder
-    max_context_chars: int = 6000
-    use_openai: bool = False
-    openai_model: str = "gpt-4o-mini"
-
-    def _gather_context(
-        self, question: str, company: Optional[str], year: Optional[int], top_k: int
-    ) -> Tuple[str, List[str]]:
-        hits = self.retriever.get_relevant(question, company, year, top_k)
-        # build a context string up to max_context_chars
-        kept: List[str] = []
-        total = 0
-        for h in hits:
-            chunk = h["chunk"] or ""
-            length = len(chunk)
-            if total + length > self.max_context_chars:
-                break
-            kept.append(chunk)
-            total += length
-
-        context_text = "\n\n".join(kept)
-        return context_text, kept
-
-    def _answer_local(self, question: str, context_text: str) -> str:
-        """
-        Lightweight 'no-LLM' answerer – return a snippet from the top context,
-        so the script can run with --no-openai and still produce something coherent.
-        """
-        if not context_text:
-            return "No relevant context found."
-        # Just take the first ~800 chars for display
-        return context_text[:800]
-
-    def _answer_openai(self, question: str, context_text: str) -> str:
-        from langchain_openai import ChatOpenAI
-        from langchain_core.messages import SystemMessage, HumanMessage
-
-        if not os.getenv("OPENAI_API_KEY"):
-            # safety: fallback to local if key missing
-            return self._answer_local(question, context_text)
-
-        llm = ChatOpenAI(model=self.openai_model, temperature=0)
-        system = SystemMessage(
-            content=(
-                "You answer questions strictly using the provided SEC filing context. "
-                "If the answer cannot be found in the context, say you don't see it."
+    # -- schema probing --
+    def _resolve_text_column(self, preferred: Optional[str]) -> str:
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = %s
+                ORDER BY ordinal_position;
+                """,
+                (self.table,),
             )
-        )
-        human = HumanMessage(
-            content=f"Question: {question}\n\nContext:\n{context_text}\n\nAnswer:"
-        )
-        out = llm.invoke([system, human])
-        return out.content.strip()
+            cols = [r[0] for r in cur.fetchall()]
 
-    # LCEL-compatible method name
-    def invoke(
+        # if user specified explicitly and it exists, use it
+        if preferred and preferred in cols:
+            return preferred
+
+        # try common names
+        for c in self._CANDIDATE_TEXT_COLS:
+            if c in cols:
+                return c
+
+        # nothing matched -> helpful error
+        raise RuntimeError(
+            f"Could not determine text column for table '{self.table}'. "
+            f"Tried {self._CANDIDATE_TEXT_COLS} plus config 'pgvector.text_column'. "
+            f"Existing columns: {cols}. "
+            f"Fix by either renaming your column to one of the candidates, "
+            f"or set pgvector.text_column in config/app.yaml."
+        )
+
+    # -- embedding helpers --
+    def _embed(self, text: str) -> List[float]:
+        vec = self._embedder.encode(
+            [text], convert_to_numpy=True, normalize_embeddings=True
+        )[0]
+        return vec.astype(np.float32).tolist()
+
+    @staticmethod
+    def _to_pgvector_literal(vec: List[float]) -> str:
+        return "[" + ",".join(f"{x:.6f}" for x in vec) + "]"
+
+    # -- public API --
+    def get_relevant(
         self, question: str, company: Optional[str], year: Optional[int], top_k: int
-    ) -> Dict[str, Any]:
-        context_text, kept = self._gather_context(question, company, year, top_k)
-        if self.use_openai:
-            ans = self._answer_openai(question, context_text)
-        else:
-            ans = self._answer_local(question, context_text)
-        return {
-            "answer": ans,
-            "contexts": kept,
-            "meta": {"company": company, "year": year},
-        }
+    ) -> List[Dict[str, Any]]:
+        if top_k <= 0:
+            top_k = 5
 
-    # convenience for scripts that call .run()
+        q_lit = self._to_pgvector_literal(self._embed(question))
+
+        where_parts: List[str] = []
+        params: List[Any] = [q_lit]  # first param for subquery
+        if company is not None:
+            where_parts.append("company = %s")
+            params.append(company)
+        if year is not None:
+            where_parts.append("year = %s")
+            params.append(int(year))  # ensure int
+
+        where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+        sql = f"""
+        SELECT id, company, year, {self.text_col} AS chunk, dist
+        FROM (
+            SELECT id, company, year, {self.text_col},
+                   embedding <-> %s::vector AS dist
+            FROM {self.table}
+            {where_sql}
+            ORDER BY embedding <-> %s::vector
+            LIMIT %s
+        ) sub
+        ORDER BY dist ASC;
+        """
+        # we need the same vector again for ORDER BY expression
+        exec_params = params + [q_lit, top_k]
+
+        out: List[Dict[str, Any]] = []
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(sql, exec_params)
+            for row in cur.fetchall():
+                _id, _company, _year, _chunk, _dist = row
+                out.append(
+                    {
+                        "id": _id,
+                        "company": _company,
+                        "year": _year,
+                        "chunk": _chunk,
+                        "distance": float(_dist),
+                    }
+                )
+        return out
+
+
+# ---------- simple chain ----------
+class _SimpleChain:
+    def __init__(
+        self,
+        retriever: PGVectorRetriever,
+        max_context_chars: int = 6000,
+        rerank_keep: int = 5,
+        use_openai: bool = False,
+    ) -> None:
+        self.retriever = retriever
+        self.max_context_chars = max_context_chars
+        self.rerank_keep = max(rerank_keep, 1)
+        self.use_openai = use_openai
+        self._openai_chat = None  # lazy
+
     def run(
         self, question: str, company: Optional[str], year: Optional[int], top_k: int
     ) -> Dict[str, Any]:
         return self.invoke(question, company, year, top_k)
 
+    def invoke(
+        self, question: str, company: Optional[str], year: Optional[int], top_k: int
+    ) -> Dict[str, Any]:
+        hits = self.retriever.get_relevant(question, company, year, top_k)
+        hits = hits[: self.rerank_keep]
+        context_text, kept = self._pack_context(hits, self.max_context_chars)
 
-# ---------------------------
-# Factory
-# ---------------------------
-def load_chain(cfg_path: str) -> SimpleChain:
-    """
-    Creates a SimpleChain using PGVector (as per your current setup).
-    """
-    cfg = load_config(cfg_path)
+        if self.use_openai:
+            answer = self._answer_with_openai(question, context_text)
+        else:
+            answer = self._answer_locally(question, kept)
 
-    # embedder
-    embed_cfg = cfg.get("embedding", {})
-    embedder = Embedder(
-        model_name=embed_cfg.get("model_name", "sentence-transformers/all-MiniLM-L6-v2"),
-        device=embed_cfg.get("device", "mps"),
-    )
+        return {"answer": answer, "contexts": [h["chunk"] for h in kept], "meta": {"company": company, "year": year}}
 
-    # pg retriever
-    pg_cfg = cfg.get("pgvector", {})
-    retriever = PGVectorRetriever(
-        conn_str=pg_cfg.get("conn", "postgresql://intel:intel@localhost:5432/intelrag"),
-        table=pg_cfg.get("table", "chunks"),
-        text_col=pg_cfg.get("text_col", "content"),
-        embedder=embedder,
-    )
+    def _pack_context(
+        self, hits: List[Dict[str, Any]], max_chars: int
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        buf, kept, cur = [], [], 0
+        for h in hits:
+            t = h.get("chunk", "") or ""
+            if cur + len(t) + 2 > max_chars:
+                break
+            buf.append(t)
+            kept.append(h)
+            cur += len(t) + 2
+        return ("\n\n".join(buf), kept)
 
-    # generation
-    gen_cfg = cfg.get("generation", {})
-    chain = SimpleChain(
-        retriever=retriever,
-        embedder=embedder,
-        max_context_chars=int(gen_cfg.get("max_context_chars", 6000)),
-        use_openai=bool(gen_cfg.get("use_openai", True)),
-        openai_model=gen_cfg.get("model", "gpt-4o-mini"),
-    )
-    return chain
+    def _answer_locally(self, question: str, hits: List[Dict[str, Any]]) -> str:
+        if not hits:
+            return "I couldn't find relevant context locally."
+        return hits[0]["chunk"]
+
+    def _answer_with_openai(self, question: str, context_text: str) -> str:
+        try:
+            from openai import OpenAI
+        except Exception:
+            return self._answer_locally(question, [])
+
+        if self._openai_chat is None:
+            self._openai_chat = OpenAI()
+
+        sys_prompt = (
+            "You are a helpful assistant answering questions strictly from the provided context. "
+            "If the answer isn't present, say you don't know."
+        )
+        user_prompt = f"Question: {question}\n\nContext:\n{context_text}\n\nAnswer:"
+
+        try:
+            resp = self._openai_chat.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            return f"(LLM fallback) {self._answer_locally(question, [])}  // Error: {e}"
