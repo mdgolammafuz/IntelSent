@@ -20,3 +20,9 @@ langchain-core>=0.2.30
 langchain-community>=0.2.10
 pyyaml>=6.0.1
 faiss-cpu>=1.8.0
+fastapi==0.115.*
+uvicorn==0.30.*
+psycopg==3.2.*
+pyyaml==6.0.*
+sentence-transformers==2.7.*
+scikit-learn==1.5.*
