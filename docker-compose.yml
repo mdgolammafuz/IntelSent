@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  pgvector:
+    image: ankane/pgvector:latest
+    container_name: intel_pgvector
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: intelrag
+      POSTGRES_USER: intel
+      POSTGRES_PASSWORD: intel
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/00_init.sql:ro
+volumes:
+  pgdata:

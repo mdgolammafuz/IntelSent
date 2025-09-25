@@ -1,16 +1,19 @@
-
-artifacts_dir: "artifacts"
+artifacts_dir: artifacts
 
 embedding:
-  model_name: "sentence-transformers/all-MiniLM-L6-v2"
-  device: "mps"   # or "cpu" if you prefer
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: mps   # or "cpu" if needed
 
 retrieval:
   top_k: 5
   max_k: 10
+  rerank_top_k: 8
 
 generation:
-  max_context_chars: 6000
+  max_context_chars: 4000
 
-rerank:
-  model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# NEW
+vector_store:
+  type: pgvector         # "faiss" or "pgvector"
+  conn_str: postgresql://intel:intel@localhost:5432/intelrag
+  table: chunks
