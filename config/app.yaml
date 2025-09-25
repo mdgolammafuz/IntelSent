@@ -1,19 +1,25 @@
+
 artifacts_dir: artifacts
 
 embedding:
   model_name: sentence-transformers/all-MiniLM-L6-v2
-  device: mps   # or "cpu" if needed
+  device: mps   # "cpu" or "cuda" if available
 
 retrieval:
   top_k: 5
   max_k: 10
-  rerank_top_k: 8
 
 generation:
-  max_context_chars: 4000
+  max_context_chars: 6000
+  model: gpt-4o-mini
+  use_openai: false   # your --no-openai run will work regardless; keep false for now
 
-# NEW
-vector_store:
-  type: pgvector         # "faiss" or "pgvector"
-  conn_str: postgresql://intel:intel@localhost:5432/intelrag
+rerank:
+  enabled: false
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+
+pgvector:
+  enabled: true
+  conn: postgresql://intel:intel@localhost:5432/intelrag
   table: chunks
+  text_col: content   # <- set to your real column name ("content" or "chunk")

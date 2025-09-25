@@ -4,198 +4,255 @@ from __future__ import annotations
 import os
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from .retriever import FAISSLocalRetriever
-from .rerank import CrossEncoderReranker, compress_with_reranker
-
-# LangChain (optional)
-HAS_LC = True
-try:
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_core.runnables import RunnableLambda, RunnableMap
-    from langchain_openai import ChatOpenAI
-except Exception:
-    HAS_LC = False
+import yaml
 
 
-@dataclass
-class AppConfig:
-    artifacts_dir: str
-    embedding_model: str
-    embedding_device: str
-    retrieval_top_k: int
-    retrieval_max_k: int
-    generation_max_context_chars: int
-    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-
-def load_config(cfg_path: str) -> AppConfig:
+# ---------------------------
+# Utility: load YAML config
+# ---------------------------
+def load_config(cfg_path: str) -> Dict[str, Any]:
     with open(cfg_path, "r") as f:
-        cfg = json.load(f) if cfg_path.endswith(".json") else _load_yaml_compat(f.read())
+        cfg = yaml.safe_load(f) or {}
 
-    if "artifacts_dir" not in cfg:
-        raise KeyError("Missing 'artifacts_dir' in config.")
-    embed_cfg = cfg.get("embedding", {})
-    retrieval_cfg = cfg.get("retrieval", {})
-    gen_cfg = cfg.get("generation", {})
+    # sensible defaults so missing keys don't crash the app
+    cfg.setdefault("artifacts_dir", "artifacts")
 
-    return AppConfig(
-        artifacts_dir=cfg["artifacts_dir"],
-        embedding_model=embed_cfg.get("model_name", "sentence-transformers/all-MiniLM-L6-v2"),
-        embedding_device=embed_cfg.get("device", "cpu"),
-        retrieval_top_k=int(retrieval_cfg.get("top_k", 5)),
-        retrieval_max_k=int(retrieval_cfg.get("max_k", max(10, int(retrieval_cfg.get("top_k", 5))))),
-        generation_max_context_chars=int(gen_cfg.get("max_context_chars", 6000)),
-        rerank_model=cfg.get("rerank", {}).get("model_name", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
-    )
+    # embedding defaults
+    cfg.setdefault("embedding", {})
+    cfg["embedding"].setdefault("model_name", "sentence-transformers/all-MiniLM-L6-v2")
+    cfg["embedding"].setdefault("device", "mps")
 
+    # retrieval defaults
+    cfg.setdefault("retrieval", {})
+    cfg["retrieval"].setdefault("top_k", 5)
+    cfg["retrieval"].setdefault("max_k", 10)
 
-def _load_yaml_compat(text: str) -> Dict[str, Any]:
-    try:
-        import yaml
-        return yaml.safe_load(text) or {}
-    except Exception:
-        data: Dict[str, Any] = {}
-        for line in text.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or ":" not in line:
-                continue
-            k, v = line.split(":", 1)
-            data[k.strip()] = _coerce(v.strip())
-        return data
+    # generation defaults
+    cfg.setdefault("generation", {})
+    cfg["generation"].setdefault("max_context_chars", 6000)
+    cfg["generation"].setdefault("model", "gpt-4o-mini")
+    cfg["generation"].setdefault("use_openai", True)  # you can disable via CLI/script
 
+    # rerank defaults (not required)
+    cfg.setdefault("rerank", {})
+    cfg["rerank"].setdefault("enabled", False)
+    cfg["rerank"].setdefault("model_name", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-def _coerce(v: str) -> Any:
-    if v.lower() in {"true", "false"}:
-        return v.lower() == "true"
-    try:
-        return int(v)
-    except Exception:
-        return v
+    # pgvector defaults
+    cfg.setdefault("pgvector", {})
+    cfg["pgvector"].setdefault("enabled", False)
+    cfg["pgvector"].setdefault("conn", "postgresql://intel:intel@localhost:5432/intelrag")
+    cfg["pgvector"].setdefault("table", "chunks")
+    # IMPORTANT: set your actual text column name here (e.g., "content" or "chunk")
+    cfg["pgvector"].setdefault("text_col", "content")
+
+    return cfg
 
 
-class SimpleChain:
-    """
-    Retrieval -> (CrossEncoder reranker) -> Prompt -> LLM (optional)
-    Gracefully falls back to extractive answer (top reranked chunk) when LLM unavailable or errors (429, etc).
-    """
+# ---------------------------
+# Embedder
+# ---------------------------
+@dataclass
+class Embedder:
+    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    device: str = "cpu"
 
-    def __init__(
+    def __post_init__(self):
+        from sentence_transformers import SentenceTransformer
+
+        self._model = SentenceTransformer(self.model_name, device=self.device)
+
+    @property
+    def dim(self) -> int:
+        # trigger a single encode to get the dimensionality
+        v = self.encode(["test"])[0]
+        return len(v)
+
+    def encode(self, texts: List[str]) -> List[List[float]]:
+        import numpy as np
+
+        embs = self._model.encode(
+            texts,
+            batch_size=32,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return [e.tolist() for e in embs]
+
+
+# ---------------------------
+# PGVector retriever (configurable text column)
+# ---------------------------
+@dataclass
+class PGVectorRetriever:
+    conn_str: str
+    table: str = "chunks"
+    text_col: str = "content"  # <-- configurable column with the chunk text
+    embedder: Optional[Embedder] = None
+
+    def get_relevant(
         self,
-        retriever: FAISSLocalRetriever,
-        reranker: CrossEncoderReranker,
-        cfg: AppConfig,
-        use_lcel: bool = True,
-    ):
-        self.retriever = retriever
-        self.reranker = reranker
-        self.cfg = cfg
+        query: str,
+        company: Optional[str],
+        year: Optional[int],
+        k: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Cosine ANN with pgvector: ORDER BY embedding <-> %s::vector
+        We pass the query embedding as a vector parameter.
+        """
+        if self.embedder is None:
+            raise RuntimeError("PGVectorRetriever requires an embedder")
 
-        # use_lcel is allowed only if LC and OPENAI are available AND user didn't force disable
-        self.has_openai = bool(os.environ.get("OPENAI_API_KEY")) and HAS_LC
-        self.use_lcel = bool(use_lcel and self.has_openai)
+        q_vec = self.embedder.encode([query])[0]  # 384-d for MiniLM
 
-        self.prompt = None
-        self.llm = None
-        if self.use_lcel:
-            self._init_lcel()
+        # Build SQL selecting *configured* text column and alias to 'chunk'
+        sql = f"""
+        SELECT id, company, year, {self.text_col} AS chunk
+        FROM {self.table}
+        WHERE (company = COALESCE(%s, company))
+          AND (year = COALESCE(%s, year))
+        ORDER BY embedding <-> %s
+        LIMIT %s;
+        """
 
-    def _init_lcel(self):
-        self.prompt = ChatPromptTemplate.from_template(
-            "Answer concisely and ONLY using the provided context. If unsure, say you don't know.\n\n"
-            "Context:\n{context}\n\nQ: {question}\n"
-        )
-        self.llm = ChatOpenAI(
-            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-            temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0.0")),
-        )
+        import psycopg
 
-        def _retrieve(inputs: Dict[str, Any]) -> List[Dict[str, Any]]:
-            q = inputs["question"]
-            company = inputs.get("company")
-            year = inputs.get("year")
-            k = int(inputs.get("k") or self.cfg.retrieval_max_k)
-            docs = self.retriever.search(q, company=company, year=year, top_k=k)
-            return docs
+        with psycopg.connect(self.conn_str) as conn:
+            with conn.cursor() as cur:
+                # parameters: company, year, query_vector, k
+                cur.execute(sql, (company, year, q_vec, k))
+                rows = cur.fetchall()
 
-        def _compress(inputs: Dict[str, Any]) -> List[Dict[str, Any]]:
-            q = inputs["question"]
-            docs = inputs["docs"]
-            top_k = int(inputs.get("top_k") or self.cfg.retrieval_top_k)
-            return compress_with_reranker(q, docs, self.reranker, k=top_k)
-
-        def _format_ctx(inputs: Dict[str, Any]) -> str:
-            docs = inputs["compressed_docs"]
-            text = "\n\n".join(d["text"] for d in docs)
-            if len(text) > self.cfg.generation_max_context_chars:
-                text = text[: self.cfg.generation_max_context_chars]
-            return text
-
-        self.retrieve_runnable = RunnableLambda(_retrieve)
-        self.compress_runnable = RunnableLambda(_compress)
-        self.format_ctx_runnable = RunnableLambda(_format_ctx)
-
-        self.pipeline = (
-            RunnableMap({
-                "question": RunnableLambda(lambda x: x["question"]),
-                "company": RunnableLambda(lambda x: x.get("company")),
-                "year": RunnableLambda(lambda x: x.get("year")),
-                "k": RunnableLambda(lambda x: x.get("k")),
-                "top_k": RunnableLambda(lambda x: x.get("top_k")),
-            })
-            | RunnableLambda(lambda x: {"question": x["question"], "docs": self.retrieve_runnable.invoke(x)})
-            | RunnableLambda(lambda x: {**x, "compressed_docs": self.compress_runnable.invoke({"question": x["question"], "docs": x["docs"], "top_k": x.get("top_k")})})
-            | RunnableLambda(lambda x: {**x, "context": self.format_ctx_runnable.invoke({"compressed_docs": x["compressed_docs"]})})
-            | RunnableLambda(lambda x: {"prompt": self.prompt.format(context=x["context"], question=x["question"]), **x})
-        )
-
-    def _extractive_answer(self, question: str, company: Optional[str], year: Optional[int], top_k: int) -> Dict[str, Any]:
-        docs = self.retriever.search(question, company=company, year=year, top_k=self.cfg.retrieval_max_k)
-        top_docs = compress_with_reranker(question, docs, self.reranker, k=top_k or self.cfg.retrieval_top_k)
-        answer = top_docs[0]["text"] if top_docs else ""
-        contexts = [d["text"] for d in top_docs]
-        return {"answer": answer, "contexts": contexts, "meta": {"company": company, "year": year}}
-
-    def invoke(self, question: str, company: Optional[str], year: Optional[int], top_k: int) -> Dict[str, Any]:
-        # If LCEL disabled or no OpenAI, do extractive path
-        if not self.use_lcel or self.llm is None or self.prompt is None:
-            return self._extractive_answer(question, company, year, top_k)
-
-        # LCEL path with runtime fallback
-        try:
-            inputs = {
-                "question": question,
-                "company": company,
-                "year": year,
-                "k": self.cfg.retrieval_max_k,
-                "top_k": top_k or self.cfg.retrieval_top_k,
+        hits = [
+            {
+                "id": r[0],
+                "company": r[1],
+                "year": r[2],
+                "chunk": r[3],
             }
-            stage = self.pipeline.invoke(inputs)
-            prompt_val = stage["prompt"]
-            compressed_docs = stage["compressed_docs"]
-            resp = self.llm.invoke(prompt_val)  # may raise due to 429/quotas
-            answer = getattr(resp, "content", str(resp))
-            contexts = [d["text"] for d in compressed_docs]
-            return {"answer": answer, "contexts": contexts, "meta": {"company": company, "year": year}}
-        except Exception as e:
-            # Fallback gracefully on any LLM error (429, timeouts, etc.)
-            # Optional: log to stderr for visibility
-            print(f"[warn] LLM failed ({type(e).__name__}): {e}. Falling back to extractive answer.", flush=True)
-            self.use_lcel = False
-            return self._extractive_answer(question, company, year, top_k)
+            for r in rows
+        ]
+        return hits
 
-    def run(self, question: str, company: Optional[str] = None, year: Optional[int] = None, top_k: int = 5) -> Dict[str, Any]:
+
+# ---------------------------
+# Simple chain
+# ---------------------------
+@dataclass
+class SimpleChain:
+    retriever: PGVectorRetriever
+    embedder: Embedder
+    max_context_chars: int = 6000
+    use_openai: bool = False
+    openai_model: str = "gpt-4o-mini"
+
+    def _gather_context(
+        self, question: str, company: Optional[str], year: Optional[int], top_k: int
+    ) -> Tuple[str, List[str]]:
+        hits = self.retriever.get_relevant(question, company, year, top_k)
+        # build a context string up to max_context_chars
+        kept: List[str] = []
+        total = 0
+        for h in hits:
+            chunk = h["chunk"] or ""
+            length = len(chunk)
+            if total + length > self.max_context_chars:
+                break
+            kept.append(chunk)
+            total += length
+
+        context_text = "\n\n".join(kept)
+        return context_text, kept
+
+    def _answer_local(self, question: str, context_text: str) -> str:
+        """
+        Lightweight 'no-LLM' answerer – return a snippet from the top context,
+        so the script can run with --no-openai and still produce something coherent.
+        """
+        if not context_text:
+            return "No relevant context found."
+        # Just take the first ~800 chars for display
+        return context_text[:800]
+
+    def _answer_openai(self, question: str, context_text: str) -> str:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        if not os.getenv("OPENAI_API_KEY"):
+            # safety: fallback to local if key missing
+            return self._answer_local(question, context_text)
+
+        llm = ChatOpenAI(model=self.openai_model, temperature=0)
+        system = SystemMessage(
+            content=(
+                "You answer questions strictly using the provided SEC filing context. "
+                "If the answer cannot be found in the context, say you don't see it."
+            )
+        )
+        human = HumanMessage(
+            content=f"Question: {question}\n\nContext:\n{context_text}\n\nAnswer:"
+        )
+        out = llm.invoke([system, human])
+        return out.content.strip()
+
+    # LCEL-compatible method name
+    def invoke(
+        self, question: str, company: Optional[str], year: Optional[int], top_k: int
+    ) -> Dict[str, Any]:
+        context_text, kept = self._gather_context(question, company, year, top_k)
+        if self.use_openai:
+            ans = self._answer_openai(question, context_text)
+        else:
+            ans = self._answer_local(question, context_text)
+        return {
+            "answer": ans,
+            "contexts": kept,
+            "meta": {"company": company, "year": year},
+        }
+
+    # convenience for scripts that call .run()
+    def run(
+        self, question: str, company: Optional[str], year: Optional[int], top_k: int
+    ) -> Dict[str, Any]:
         return self.invoke(question, company, year, top_k)
 
 
-def load_chain(cfg_path: str, use_lcel: bool = True) -> SimpleChain:
+# ---------------------------
+# Factory
+# ---------------------------
+def load_chain(cfg_path: str) -> SimpleChain:
+    """
+    Creates a SimpleChain using PGVector (as per your current setup).
+    """
     cfg = load_config(cfg_path)
-    retriever = FAISSLocalRetriever(
-        faiss_index_path=os.path.join(cfg.artifacts_dir, "sec_faiss.index"),
-        chunks_meta_path=os.path.join(cfg.artifacts_dir, "chunks.pkl"),
-        embed_model=cfg.embedding_model,
-        embed_device=cfg.embedding_device,
+
+    # embedder
+    embed_cfg = cfg.get("embedding", {})
+    embedder = Embedder(
+        model_name=embed_cfg.get("model_name", "sentence-transformers/all-MiniLM-L6-v2"),
+        device=embed_cfg.get("device", "mps"),
     )
-    reranker = CrossEncoderReranker(model_name=cfg.rerank_model, top_k=cfg.retrieval_top_k)
-    return SimpleChain(retriever=retriever, reranker=reranker, cfg=cfg, use_lcel=use_lcel)
+
+    # pg retriever
+    pg_cfg = cfg.get("pgvector", {})
+    retriever = PGVectorRetriever(
+        conn_str=pg_cfg.get("conn", "postgresql://intel:intel@localhost:5432/intelrag"),
+        table=pg_cfg.get("table", "chunks"),
+        text_col=pg_cfg.get("text_col", "content"),
+        embedder=embedder,
+    )
+
+    # generation
+    gen_cfg = cfg.get("generation", {})
+    chain = SimpleChain(
+        retriever=retriever,
+        embedder=embedder,
+        max_context_chars=int(gen_cfg.get("max_context_chars", 6000)),
+        use_openai=bool(gen_cfg.get("use_openai", True)),
+        openai_model=gen_cfg.get("model", "gpt-4o-mini"),
+    )
+    return chain
