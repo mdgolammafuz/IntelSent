@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: intel-pgvector
+spec:
+  selector:
+    app: intel-pgvector
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intel-pgvector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: intel-pgvector
+  template:
+    metadata:
+      labels:
+        app: intel-pgvector
+    spec:
+      containers:
+        - name: pg
+          image: ankane/pgvector:latest
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: intelrag
+            - name: POSTGRES_USER
+              value: intel
+            - name: POSTGRES_PASSWORD
+              value: intel
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pgdata
+          emptyDir: {}

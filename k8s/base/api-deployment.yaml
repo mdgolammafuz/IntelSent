@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: intelsent-api
+spec:
+  type: ClusterIP
+  selector:
+    app: intelsent-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intelsent-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: intelsent-api
+  template:
+    metadata:
+      labels:
+        app: intelsent-api
+    spec:
+      containers:
+        - name: api
+          image: intelsent-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: app-config
+              mountPath: /app/config/app.yaml
+              subPath: app.yaml
+              readOnly: true
+            - name: app-config
+              mountPath: /app/config/drivers.yml
+              subPath: drivers.yml
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /docs
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: app-config
+          configMap:
+            name: intelsent-config
+            items:
+              - key: app.yaml
+                path: app.yaml
+              - key: drivers.yml
+                path: drivers.yml

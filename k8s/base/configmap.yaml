@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: intelsent-config
+data:
+  app.yaml: |
+    db:
+      conn_str: postgresql://intel:intel@intel-pgvector:5432/intelrag
+    retrieval:
+      top_k: 5
+      max_k: 20
+    generation:
+      max_context_chars: 6000
+  drivers.yml: |
+    questions:
+      revenue_driver: "Which product or service was revenue growth driven by?"
+    driver_regex:
+      - "(?i)revenue (?:growth|increase) .*? driven by (?P<driver>[^.;\\n]+)"
+    segments:
+      cloud: ["azure", "microsoft 365", "office 365", "dynamics 365"]
+      gaming: ["xbox", "game pass", "first-party content"]
+      ads: ["search and news advertising", "advertising", "Bing"]
