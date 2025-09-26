@@ -1,0 +1,15 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: intel_api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - pgvector        # ← service name from our base compose, not the container_name
+    networks:
+      - default
+    volumes:
+      - ./config/app.docker.yaml:/app/config/app.yaml:ro
+      - ./config/drivers.yml:/app/config/drivers.yml:ro
