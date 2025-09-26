@@ -7,9 +7,10 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - pgvector        # ← service name from our base compose, not the container_name
+      - pgvector
     networks:
       - default
     volumes:
-      - ./config/app.docker.yaml:/app/config/app.yaml:ro
+      # Use the actual filename we have: app.docker.yml (NOT .yaml)
+      - ./config/app.docker.yml:/app/config/app.yaml:ro
       - ./config/drivers.yml:/app/config/drivers.yml:ro

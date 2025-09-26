@@ -1,0 +1,10 @@
+db:
+  # Use the **service name** as host so containers can talk: pgvector
+  conn_str: postgresql://intel:intel@pgvector:5432/intelrag
+
+retrieval:
+  top_k: 5
+  max_k: 20
+
+generation:
+  max_context_chars: 6000

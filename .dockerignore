@@ -1,0 +1,13 @@
+.git
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+artifacts/
+datasets/
+sec-edgar-filings/
+reports/
+.qa/
+.venv
+venv
