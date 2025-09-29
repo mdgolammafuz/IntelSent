@@ -1,0 +1,15 @@
+# Dockerfile.psycopg
+FROM python:3.10-slim
+
+# Upgrade pip first (old pip can bork wheel resolution)
+RUN pip install --no-cache-dir --upgrade pip
+
+# ✅ Install psycopg (the package) with the [binary] extra — QUOTED
+RUN pip install --no-cache-dir 'psycopg[binary]==3.2.10'
+
+# Sanity: prove import at build time
+RUN python - <<'PY'
+import psycopg, pkgutil
+print("psycopg version:", getattr(psycopg, "__version__", "unknown"))
+print("has submodule pq? ", "psycopg.pq" in {m.name for m in pkgutil.iter_modules()})
+PY

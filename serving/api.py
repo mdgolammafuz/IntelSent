@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import os,sys
+import os, sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 
 from typing import Any, Dict, List, Optional
 
@@ -11,20 +10,24 @@ from pydantic import BaseModel
 import yaml
 
 # ---- Local modules (new chain) ----
-# This is the pgvector-backed chain we wired during the CLI testing.
 from rag.chain import load_chain
 
-# (Optional) legacy helpers still used by the /drivers_by_segment route
-# We can remove these later if you don’t use that route.
+# (Optional) legacy helpers for /drivers_by_segment
 from rag.extract import extract_driver
 from rag.generator import generate_answer
 
 # --------------------------------------------------------------------------------------
-# Config loading (drivers.yml is optional; app.yaml is used by the chain internally)
+# Config loading
 # --------------------------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DRIVERS_CFG_PATH = os.path.join(BASE_DIR, "config", "drivers.yml")
-APP_CFG_PATH = os.getenv("APP_CONFIG", os.path.join(BASE_DIR, "config", "app.yaml"))
+
+# Prefer APP_CFG_PATH (what compose sets), then APP_CONFIG, then default file
+APP_CFG_PATH = (
+    os.getenv("APP_CFG_PATH")
+    or os.getenv("APP_CONFIG")
+    or os.path.join(BASE_DIR, "config", "app.yaml")
+)
 
 def _load_yaml(path: str) -> Dict[str, Any]:
     if not os.path.exists(path):
@@ -35,7 +38,7 @@ def _load_yaml(path: str) -> Dict[str, Any]:
 DRIVERS_CFG: Dict[str, Any] = {}
 
 # --------------------------------------------------------------------------------------
-# Create chain once at startup
+# Create chain once at import/startup
 # --------------------------------------------------------------------------------------
 CHAIN = load_chain(APP_CFG_PATH)
 
@@ -44,12 +47,10 @@ CHAIN = load_chain(APP_CFG_PATH)
 # --------------------------------------------------------------------------------------
 app = FastAPI(title="IntelSent API", version="0.3")
 
-# Keep our existing ingest router wiring
 try:
     from serving.ingest_runner import router as ingest_router
     app.include_router(ingest_router)
 except Exception as e:
-    # Non-fatal; route won't be present if the module isn't available
     print(f"[api] Ingest router not loaded: {e}")
 
 # --------------------------------------------------------------------------------------
@@ -99,27 +100,17 @@ def healthz() -> Dict[str, Any]:
 
 @app.post("/query", response_model=QueryResponse)
 def query(req: QueryRequest) -> QueryResponse:
-    """
-    Primary query endpoint. Uses the pgvector-backed chain.
-    Set no_openai=true to force the local answerer even if OPENAI_API_KEY is set.
-    """
-    # toggle OpenAI usage per-request if we want
     CHAIN.use_openai = not req.no_openai
-
     out = CHAIN.run(
         question=req.text,
         company=req.company,
         year=req.year,
         top_k=req.top_k,
     )
-    # out has: {"answer": str, "contexts": List[str], "meta": {...}}
     return QueryResponse(**out)
 
 @app.post("/driver", response_model=QueryResponse)
 def driver(req: DriverRequest) -> QueryResponse:
-    """
-    Convenience route: uses a canonical 'revenue driver' question if present in drivers.yml
-    """
     q_default = "Which product or service was revenue growth driven by?"
     q = (DRIVERS_CFG.get("questions", {}) or {}).get("revenue_driver", q_default)
 
@@ -132,8 +123,6 @@ def driver(req: DriverRequest) -> QueryResponse:
     )
     return QueryResponse(**out)
 
-# Optional: If we still want a segmented “drivers_by_segment” helper, keep this.
-# It uses the chain to get top contexts and then tries a tiny extractor/generator.
 @app.post("/drivers_by_segment")
 def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
     segments: Dict[str, List[str]] = (DRIVERS_CFG.get("segments", {}) or {})
@@ -154,7 +143,6 @@ def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
         ctxs: List[str] = result.get("contexts", []) or []
         meta = result.get("meta", {})
 
-        # prefer a context that contains a segment keyword
         pick_text = None
         kl = [k.lower() for k in keywords]
         for t in ctxs:
@@ -169,7 +157,6 @@ def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
         if pick_text:
             phrase = extract_driver([pick_text], patterns) or ""
             if not phrase:
-                # last fallback: tiny generator over the top-3 contexts
                 phrase = generate_answer(ctxs[:3], base_q) or ""
 
         out["segments"][seg_name] = {

@@ -4,19 +4,37 @@ metadata:
   name: intelsent-config
 data:
   app.yaml: |
-    db:
-      conn_str: postgresql://intel:intel@intel-pgvector:5432/intelrag
+    artifacts_dir: artifacts
+
+    embedding:
+      model_name: sentence-transformers/all-MiniLM-L6-v2
+      device: cpu
+
     retrieval:
       top_k: 5
-      max_k: 20
+      max_k: 10
+
     generation:
       max_context_chars: 6000
+      model: gpt-4o-mini
+      use_openai: false
+
+    rerank:
+      enabled: false
+      model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+
+    pgvector:
+      enabled: true
+      conn: postgresql://intel:intel@intel-pgvector:5432/intelrag
+      table: chunks
+      text_col: content
+
   drivers.yml: |
     questions:
       revenue_driver: "Which product or service was revenue growth driven by?"
     driver_regex:
-      - "(?i)revenue (?:growth|increase) .*? driven by (?P<driver>[^.;\\n]+)"
+      - "(?:driven by|led by|due to)\\s+([^.;:\\n]+)"
     segments:
-      cloud: ["azure", "microsoft 365", "office 365", "dynamics 365"]
-      gaming: ["xbox", "game pass", "first-party content"]
-      ads: ["search and news advertising", "advertising", "Bing"]
+      Cloud: ["azure", "cloud", "microsoft 365", "office 365"]
+      Gaming: ["xbox", "game pass", "gaming"]
+      Search: ["search", "advertising"]

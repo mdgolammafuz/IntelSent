@@ -1,16 +1,3 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: intelsent-api
-spec:
-  type: ClusterIP
-  selector:
-    app: intelsent-api
-  ports:
-    - name: http
-      port: 8000
-      targetPort: 8000
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,10 +14,19 @@ spec:
     spec:
       containers:
         - name: api
-          image: intelsent-api:latest
+          image: intelsent-api:v6
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
+          env:
+            - name: HF_HOME
+              value: /app/.cache/hf
+            - name: TRANSFORMERS_CACHE
+              value: /app/.cache/transformers
+            - name: SENTENCE_TRANSFORMERS_HOME
+              value: /app/.cache/sentence-transformers
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
           volumeMounts:
             - name: app-config
               mountPath: /app/config/app.yaml
@@ -42,16 +38,33 @@ spec:
               readOnly: true
           readinessProbe:
             httpGet:
-              path: /docs
+              path: /
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 6
       volumes:
         - name: app-config
           configMap:
             name: intelsent-config
-            items:
-              - key: app.yaml
-                path: app.yaml
-              - key: drivers.yml
-                path: drivers.yml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intelsent-api
+spec:
+  selector:
+    app: intelsent-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP

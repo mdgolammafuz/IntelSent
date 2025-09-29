@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import os
@@ -30,12 +29,18 @@ def load_chain(cfg_path: str) -> "_SimpleChain":
 
     # Embedding
     embed_model = _get(cfg, "embedding.model_name", "sentence-transformers/all-MiniLM-L6-v2")
-    embed_device = _get(cfg, "embedding.device", "cpu")  # "mps" ok on Apple
+    embed_device = _get(cfg, "embedding.device", "cpu")
 
-    # pgvector
-    pg_dsn = _get(cfg, "pgvector.dsn", "postgresql://intel:intel@localhost:5432/intelrag")
+    # pgvector DSN resolution (prefer the keys you actually use)
+    pg_dsn = (
+        _get(cfg, "pgvector.conn")
+        or _get(cfg, "db.conn_str")
+        or _get(cfg, "pgvector.dsn")
+        or "postgresql://intel:intel@pgvector:5432/intelrag"
+    )
     table = _get(cfg, "pgvector.table", "chunks")
-    text_col_pref = _get(cfg, "pgvector.text_column", None)  # if you know it, set it; else autodetect
+    # accept either text_col or text_column
+    text_col_pref = _get(cfg, "pgvector.text_col", _get(cfg, "pgvector.text_column", None))
 
     # generation
     max_context_chars = int(_get(cfg, "generation.max_context_chars", 6000))
@@ -70,13 +75,6 @@ def _env_force_no_openai() -> bool:
 
 # ---------- pgvector retriever ----------
 class PGVectorRetriever:
-    """
-    - Embeds query with SentenceTransformers
-    - Filters by (company, year) when provided
-    - Uses <-> with a vector literal cast (%s::vector)
-    - Auto-detects the text column if not provided
-    """
-
     _CANDIDATE_TEXT_COLS = ["chunk", "content", "text", "passage", "body"]
 
     def __init__(
@@ -90,11 +88,8 @@ class PGVectorRetriever:
         self.dsn = dsn
         self.table = table
         self._embedder = SentenceTransformer(embed_model, device=embed_device)
-
-        # figure out the text column once
         self.text_col = self._resolve_text_column(text_col_pref)
 
-    # -- schema probing --
     def _resolve_text_column(self, preferred: Optional[str]) -> str:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
@@ -108,25 +103,20 @@ class PGVectorRetriever:
             )
             cols = [r[0] for r in cur.fetchall()]
 
-        # if user specified explicitly and it exists, use it
         if preferred and preferred in cols:
             return preferred
 
-        # try common names
         for c in self._CANDIDATE_TEXT_COLS:
             if c in cols:
                 return c
 
-        # nothing matched -> helpful error
         raise RuntimeError(
             f"Could not determine text column for table '{self.table}'. "
-            f"Tried {self._CANDIDATE_TEXT_COLS} plus config 'pgvector.text_column'. "
+            f"Tried {self._CANDIDATE_TEXT_COLS} plus config 'pgvector.text_column'/'pgvector.text_col'. "
             f"Existing columns: {cols}. "
-            f"Fix by either renaming your column to one of the candidates, "
-            f"or set pgvector.text_column in config/app.yaml."
+            f"Fix by setting pgvector.text_col in config/app.yaml."
         )
 
-    # -- embedding helpers --
     def _embed(self, text: str) -> List[float]:
         vec = self._embedder.encode(
             [text], convert_to_numpy=True, normalize_embeddings=True
@@ -137,7 +127,6 @@ class PGVectorRetriever:
     def _to_pgvector_literal(vec: List[float]) -> str:
         return "[" + ",".join(f"{x:.6f}" for x in vec) + "]"
 
-    # -- public API --
     def get_relevant(
         self, question: str, company: Optional[str], year: Optional[int], top_k: int
     ) -> List[Dict[str, Any]]:
@@ -147,13 +136,13 @@ class PGVectorRetriever:
         q_lit = self._to_pgvector_literal(self._embed(question))
 
         where_parts: List[str] = []
-        params: List[Any] = [q_lit]  # first param for subquery
+        params: List[Any] = [q_lit]
         if company is not None:
             where_parts.append("company = %s")
             params.append(company)
         if year is not None:
             where_parts.append("year = %s")
-            params.append(int(year))  # ensure int
+            params.append(int(year))
 
         where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -169,7 +158,6 @@ class PGVectorRetriever:
         ) sub
         ORDER BY dist ASC;
         """
-        # we need the same vector again for ORDER BY expression
         exec_params = params + [q_lit, top_k]
 
         out: List[Dict[str, Any]] = []
@@ -202,7 +190,7 @@ class _SimpleChain:
         self.max_context_chars = max_context_chars
         self.rerank_keep = max(rerank_keep, 1)
         self.use_openai = use_openai
-        self._openai_chat = None  # lazy
+        self._openai_chat = None
 
     def run(
         self, question: str, company: Optional[str], year: Optional[int], top_k: int

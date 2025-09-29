@@ -3,14 +3,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: intel_api
+    image: intelsent-api:latest
+    container_name: intelsent-api
+    depends_on:
+      pgvector:
+        condition: service_healthy
     ports:
       - "8000:8000"
-    depends_on:
-      - pgvector
-    networks:
-      - default
+    environment:
+      APP_CONFIG: /app/config/app.yaml
+      HF_HOME: /app/.cache/hf
+      SENTENCE_TRANSFORMERS_HOME: /app/.cache/sentence-transformers
+      # optional: suppress general FutureWarnings from transformers
+      PYTHONWARNINGS: "ignore::FutureWarning:transformers"
     volumes:
-      # Use the actual filename we have: app.docker.yml (NOT .yaml)
       - ./config/app.docker.yml:/app/config/app.yaml:ro
       - ./config/drivers.yml:/app/config/drivers.yml:ro
+    command: >
+      sh -lc '
+        unset TRANSFORMERS_CACHE
+        exec uvicorn serving.api:app --host 0.0.0.0 --port 8000 --log-level info
+      '
