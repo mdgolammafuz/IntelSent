@@ -5,24 +5,22 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import yaml
 
-# ---- Local modules (new chain) ----
+# ---- Local modules ----
 from rag.chain import load_chain
-
-# (Optional) legacy helpers for /drivers_by_segment
 from rag.extract import extract_driver
 from rag.generator import generate_answer
 
 # --------------------------------------------------------------------------------------
-# Config loading
+# Config
 # --------------------------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DRIVERS_CFG_PATH = os.path.join(BASE_DIR, "config", "drivers.yml")
 
-# Prefer APP_CFG_PATH (what compose sets), then APP_CONFIG, then default file
+# Prefer APP_CFG_PATH (compose), then APP_CONFIG, then default
 APP_CFG_PATH = (
     os.getenv("APP_CFG_PATH")
     or os.getenv("APP_CONFIG")
@@ -38,9 +36,10 @@ def _load_yaml(path: str) -> Dict[str, Any]:
 DRIVERS_CFG: Dict[str, Any] = {}
 
 # --------------------------------------------------------------------------------------
-# Create chain once at import/startup
+# Chain init (test-friendly)
 # --------------------------------------------------------------------------------------
-CHAIN = load_chain(APP_CFG_PATH)
+SKIP_CHAIN_INIT = os.getenv("SKIP_CHAIN_INIT", "").lower() in {"1", "true", "yes"}
+CHAIN = None if SKIP_CHAIN_INIT else load_chain(APP_CFG_PATH)
 
 # --------------------------------------------------------------------------------------
 # FastAPI app + optional ingest router
@@ -92,6 +91,7 @@ def root() -> Dict[str, Any]:
         "service": "IntelSent",
         "app_config": APP_CFG_PATH,
         "drivers_cfg_loaded": bool(DRIVERS_CFG),
+        "chain_initialized": CHAIN is not None,
     }
 
 @app.get("/healthz")
@@ -100,6 +100,8 @@ def healthz() -> Dict[str, Any]:
 
 @app.post("/query", response_model=QueryResponse)
 def query(req: QueryRequest) -> QueryResponse:
+    if CHAIN is None:
+        raise HTTPException(status_code=503, detail="CHAIN not initialized")
     CHAIN.use_openai = not req.no_openai
     out = CHAIN.run(
         question=req.text,
@@ -111,9 +113,10 @@ def query(req: QueryRequest) -> QueryResponse:
 
 @app.post("/driver", response_model=QueryResponse)
 def driver(req: DriverRequest) -> QueryResponse:
+    if CHAIN is None:
+        raise HTTPException(status_code=503, detail="CHAIN not initialized")
     q_default = "Which product or service was revenue growth driven by?"
     q = (DRIVERS_CFG.get("questions", {}) or {}).get("revenue_driver", q_default)
-
     CHAIN.use_openai = not req.no_openai
     out = CHAIN.run(
         question=q,
@@ -125,6 +128,8 @@ def driver(req: DriverRequest) -> QueryResponse:
 
 @app.post("/drivers_by_segment")
 def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
+    if CHAIN is None:
+        raise HTTPException(status_code=503, detail="CHAIN not initialized")
     segments: Dict[str, List[str]] = (DRIVERS_CFG.get("segments", {}) or {})
     patterns = (DRIVERS_CFG.get("driver_regex", []) or [])
     q_default = "Which product or service was revenue growth driven by?"
