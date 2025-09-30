@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   api:
     build:
@@ -13,14 +15,26 @@ services:
     environment:
       APP_CONFIG: /app/config/app.yaml
       HF_HOME: /app/.cache/hf
-      SENTENCE_TRANSFORMERS_HOME: /app/.cache/sentence-transformers
-      # optional: suppress general FutureWarnings from transformers
-      PYTHONWARNINGS: "ignore::FutureWarning:transformers"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: gpt-4o-mini
     volumes:
       - ./config/app.docker.yml:/app/config/app.yaml:ro
       - ./config/drivers.yml:/app/config/drivers.yml:ro
-    command: >
-      sh -lc '
-        unset TRANSFORMERS_CACHE
-        exec uvicorn serving.api:app --host 0.0.0.0 --port 8000 --log-level info
-      '
+      - ./data:/app/data:ro            # <-- bind-mount data/ so /ingest/sec can run
+
+  pgvector:
+    image: ankane/pgvector:latest
+    container_name: intel_pgvector
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: intel
+      POSTGRES_PASSWORD: intel
+      POSTGRES_DB: intelrag
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intel -d intelrag"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
