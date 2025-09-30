@@ -39,6 +39,17 @@ spec:
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql/data
+            # mount init.sql so the entrypoint runs it on first init
+            - name: pg-init
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init.sql
+              readOnly: true
       volumes:
         - name: pgdata
           emptyDir: {}
+        - name: pg-init
+          configMap:
+            name: pg-init
+            items:
+              - key: init.sql
+                path: init.sql

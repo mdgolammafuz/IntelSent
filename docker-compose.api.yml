@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   api:
     build:
@@ -15,12 +13,16 @@ services:
     environment:
       APP_CONFIG: /app/config/app.yaml
       HF_HOME: /app/.cache/hf
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Leave OPENAI_API_KEY empty to avoid any paid usage.
+      # When we want OpenAI, export OPENAI_API_KEY in our shell before `docker compose up`.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: gpt-4o-mini
+      # Force local answers if no key:
+      NO_OPENAI: ${NO_OPENAI:-${OPENAI_API_KEY:+0}}
     volumes:
       - ./config/app.docker.yml:/app/config/app.yaml:ro
       - ./config/drivers.yml:/app/config/drivers.yml:ro
-      - ./data:/app/data:ro            # <-- bind-mount data/ so /ingest/sec can run
+      - ./data:/app/data:ro
 
   pgvector:
     image: ankane/pgvector:latest

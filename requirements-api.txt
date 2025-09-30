@@ -3,11 +3,10 @@ uvicorn[standard]==0.30.6
 PyYAML==6.0.2
 
 # Core numerics / ML
-numpy==1.26.4
 regex==2024.9.11
 tqdm==4.66.5
 scikit-learn==1.5.2
-
+numpy==1.26.4
 # Hugging Face stack
 transformers==4.44.2
 sentence-transformers==3.0.1
@@ -18,3 +17,5 @@ torch==2.2.2
 
 # Postgres client (psycopg v3 with embedded libpq)
 psycopg[binary]==3.2.10
+
+openai>=1.40.0

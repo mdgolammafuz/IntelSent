@@ -1,9 +1,12 @@
+# k8s/base/api-deployment.yaml (only the added 'strategy' bit is new)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: intelsent-api
 spec:
   replicas: 1
+  strategy:
+    type: Recreate          # <— key change for single replica
   selector:
     matchLabels:
       app: intelsent-api
@@ -12,21 +15,20 @@ spec:
       labels:
         app: intelsent-api
     spec:
+      terminationGracePeriodSeconds: 5
       containers:
         - name: api
-          image: intelsent-api:v6
+          image: intelsent-api:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
           env:
+            - name: APP_CONFIG
+              value: /app/config/app.yaml
             - name: HF_HOME
               value: /app/.cache/hf
-            - name: TRANSFORMERS_CACHE
-              value: /app/.cache/transformers
-            - name: SENTENCE_TRANSFORMERS_HOME
-              value: /app/.cache/sentence-transformers
-            - name: TRANSFORMERS_OFFLINE
-              value: "1"
+            - name: OPENAI_MODEL
+              value: gpt-4o-mini
           volumeMounts:
             - name: app-config
               mountPath: /app/config/app.yaml
@@ -37,17 +39,13 @@ spec:
               subPath: drivers.yml
               readOnly: true
           readinessProbe:
-            httpGet:
-              path: /
-              port: 8000
+            httpGet: { path: /healthz, port: 8000 }
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 2
             failureThreshold: 6
           livenessProbe:
-            httpGet:
-              path: /
-              port: 8000
+            httpGet: { path: /healthz, port: 8000 }
             initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 2
