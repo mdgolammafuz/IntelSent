@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import os, sys
+import os, sys, time, uuid
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 import yaml
+
+# ---- Logging (structlog) ----
+from serving.logging_setup import logger as log  # shared bound logger
 
 # ---- Local modules ----
 from rag.chain import load_chain
@@ -46,11 +50,48 @@ CHAIN = None if SKIP_CHAIN_INIT else load_chain(APP_CFG_PATH)
 # --------------------------------------------------------------------------------------
 app = FastAPI(title="IntelSent API", version="0.3")
 
+# ---- Minimal structured access logs ----
+@app.middleware("http")
+async def access_log_mw(request: Request, call_next):
+    rid = str(uuid.uuid4())
+    start = time.perf_counter()
+    # include request-id in response for tracing
+    request.state.request_id = rid
+
+    try:
+        response: Response = await call_next(request)
+        dur_ms = (time.perf_counter() - start) * 1000.0
+        log.info(
+            "http.request",
+            method=request.method,
+            path=request.url.path,
+            query=str(request.url.query or ""),
+            status=response.status_code,
+            duration_ms=round(dur_ms, 2),
+            request_id=rid,
+        )
+        response.headers["X-Request-ID"] = rid
+        return response
+    except Exception as e:
+        dur_ms = (time.perf_counter() - start) * 1000.0
+        log.error(
+            "http.error",
+            method=request.method,
+            path=request.url.path,
+            query=str(request.url.query or ""),
+            error=str(e),
+            duration_ms=round(dur_ms, 2),
+            request_id=rid,
+        )
+        # keep default exception handling
+        raise
+
+# Keep our existing ingest router wiring
 try:
     from serving.ingest_runner import router as ingest_router
     app.include_router(ingest_router)
 except Exception as e:
-    print(f"[api] Ingest router not loaded: {e}")
+    log.warning("ingest.router_not_loaded", error=str(e))
 
 # --------------------------------------------------------------------------------------
 # Schemas
@@ -80,6 +121,12 @@ class DriverRequest(BaseModel):
 def startup() -> None:
     global DRIVERS_CFG
     DRIVERS_CFG = _load_yaml(DRIVERS_CFG_PATH)
+    log.info(
+        "app.startup",
+        app_config=APP_CFG_PATH,
+        drivers_cfg_loaded=bool(DRIVERS_CFG),
+        chain_initialized=CHAIN is not None,
+    )
 
 # --------------------------------------------------------------------------------------
 # Routes
@@ -98,9 +145,15 @@ def root() -> Dict[str, Any]:
 def healthz() -> Dict[str, Any]:
     return {"status": "ok"}
 
+# tiny /metrics stub to avoid noisy 404s from scrapers
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics() -> str:
+    return "# intelsent demo metrics\nok 1\n"
+
 @app.post("/query", response_model=QueryResponse)
 def query(req: QueryRequest) -> QueryResponse:
     if CHAIN is None:
+        log.warning("chain.not_initialized", route="/query")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
     CHAIN.use_openai = not req.no_openai
     out = CHAIN.run(
@@ -114,6 +167,7 @@ def query(req: QueryRequest) -> QueryResponse:
 @app.post("/driver", response_model=QueryResponse)
 def driver(req: DriverRequest) -> QueryResponse:
     if CHAIN is None:
+        log.warning("chain.not_initialized", route="/driver")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
     q_default = "Which product or service was revenue growth driven by?"
     q = (DRIVERS_CFG.get("questions", {}) or {}).get("revenue_driver", q_default)
@@ -129,6 +183,7 @@ def driver(req: DriverRequest) -> QueryResponse:
 @app.post("/drivers_by_segment")
 def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
     if CHAIN is None:
+        log.warning("chain.not_initialized", route="/drivers_by_segment")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
     segments: Dict[str, List[str]] = (DRIVERS_CFG.get("segments", {}) or {})
     patterns = (DRIVERS_CFG.get("driver_regex", []) or [])
