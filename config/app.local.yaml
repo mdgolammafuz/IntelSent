@@ -1,0 +1,24 @@
+artifacts_dir: artifacts
+
+embedding:
+  model_name: sentence-transformers/all-MiniLM-L6-v2
+  device: cpu
+
+retrieval:
+  top_k: 5
+  max_k: 20
+
+generation:
+  max_context_chars: 6000
+  model: gpt-4o-mini
+  use_openai: false
+
+rerank:
+  enabled: false
+  model_name: cross-encoder/ms-marco-MiniLM-L-6-v2
+
+pgvector:
+  enabled: true
+  conn: postgresql://intel:intel@127.0.0.1:5432/intelrag
+  table: chunks
+  text_col: content

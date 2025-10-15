@@ -15,5 +15,5 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_meta ON chunks(company, year);
 
 -- IVF index for fast ANN (requires analyze; build once data exists)
--- You can build this after loading:
+-- We can build this after loading:
 -- CREATE INDEX idx_chunks_embedding ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
