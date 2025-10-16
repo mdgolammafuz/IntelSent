@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os, sys, time, uuid
+from datetime import datetime, timezone
+
+# allow "from rag... import ..." in local runs
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from typing import Any, Dict, List, Optional
@@ -24,7 +27,6 @@ from rag.generator import generate_answer
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DRIVERS_CFG_PATH = os.path.join(BASE_DIR, "config", "drivers.yml")
 
-# Prefer APP_CFG_PATH (compose), then APP_CONFIG, then default
 APP_CFG_PATH = (
     os.getenv("APP_CFG_PATH")
     or os.getenv("APP_CONFIG")
@@ -46,6 +48,42 @@ SKIP_CHAIN_INIT = os.getenv("SKIP_CHAIN_INIT", "").lower() in {"1", "true", "yes
 CHAIN = None if SKIP_CHAIN_INIT else load_chain(APP_CFG_PATH)
 
 # --------------------------------------------------------------------------------------
+# LangSmith tracing (minimal, version-safe)
+# --------------------------------------------------------------------------------------
+_LANGSMITH_ENABLED = os.getenv("LANGSMITH_TRACING", "").lower() in {"1", "true", "yes"}
+try:
+    if _LANGSMITH_ENABLED:
+        from langsmith import traceable  # type: ignore
+        log.info("langsmith.init", project=os.getenv("LANGSMITH_PROJECT", "IntelSent"))
+    else:
+        # no-op decorator if tracing is off
+        def traceable(*args, **kwargs):  # type: ignore
+            def _wrap(fn): return fn
+            return _wrap
+except Exception as e:
+    log.warning("langsmith.init_failed", error=str(e))
+    def traceable(*args, **kwargs):  # type: ignore
+        def _wrap(fn): return fn
+        return _wrap
+
+@traceable(name="query", run_type="chain")
+def traced_chain_run(question: str,
+                     company: Optional[str],
+                     year: Optional[int],
+                     top_k: int,
+                     use_openai: bool) -> Dict[str, Any]:
+    # Inputs are captured by LangSmith via the decorator
+    CHAIN.use_openai = use_openai
+    out = CHAIN.run(
+        question=question,
+        company=company,
+        year=year,
+        top_k=top_k,
+    )
+    # Return value is captured as outputs
+    return out
+
+# --------------------------------------------------------------------------------------
 # FastAPI app + optional ingest router
 # --------------------------------------------------------------------------------------
 app = FastAPI(title="IntelSent API", version="0.3")
@@ -55,9 +93,7 @@ app = FastAPI(title="IntelSent API", version="0.3")
 async def access_log_mw(request: Request, call_next):
     rid = str(uuid.uuid4())
     start = time.perf_counter()
-    # include request-id in response for tracing
     request.state.request_id = rid
-
     try:
         response: Response = await call_next(request)
         dur_ms = (time.perf_counter() - start) * 1000.0
@@ -83,14 +119,15 @@ async def access_log_mw(request: Request, call_next):
             duration_ms=round(dur_ms, 2),
             request_id=rid,
         )
-        # keep default exception handling
         raise
 
-# Keep our existing ingest router wiring
+# Optional ingest router
 try:
     from serving.ingest_runner import router as ingest_router
     app.include_router(ingest_router)
+    log.info("router.ingest_loaded", ok=True)
 except Exception as e:
+    log.info("router.ingest_loaded", ok=False)
     log.warning("ingest.router_not_loaded", error=str(e))
 
 # --------------------------------------------------------------------------------------
@@ -155,13 +192,24 @@ def query(req: QueryRequest) -> QueryResponse:
     if CHAIN is None:
         log.warning("chain.not_initialized", route="/query")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
-    CHAIN.use_openai = not req.no_openai
-    out = CHAIN.run(
+
+    log.info(
+        "query.start",
+        company=req.company,
+        year=req.year,
+        top_k=req.top_k,
+        use_openai=not req.no_openai,
+    )
+
+    out = traced_chain_run(
         question=req.text,
         company=req.company,
         year=req.year,
         top_k=req.top_k,
+        use_openai=not req.no_openai,
     )
+
+    log.info("query.done", contexts=len(out.get("contexts", []) if out else []))
     return QueryResponse(**out)
 
 @app.post("/driver", response_model=QueryResponse)
@@ -171,12 +219,12 @@ def driver(req: DriverRequest) -> QueryResponse:
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
     q_default = "Which product or service was revenue growth driven by?"
     q = (DRIVERS_CFG.get("questions", {}) or {}).get("revenue_driver", q_default)
-    CHAIN.use_openai = not req.no_openai
-    out = CHAIN.run(
+    out = traced_chain_run(
         question=q,
         company=req.company,
         year=req.year,
         top_k=req.top_k,
+        use_openai=not req.no_openai,
     )
     return QueryResponse(**out)
 
@@ -190,15 +238,14 @@ def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
     q_default = "Which product or service was revenue growth driven by?"
     base_q = (DRIVERS_CFG.get("questions", {}) or {}).get("revenue_driver", q_default)
 
-    CHAIN.use_openai = not req.no_openai
-
     out: Dict[str, Any] = {"company": req.company, "segments": {}}
     for seg_name, keywords in segments.items():
-        result = CHAIN.run(
+        result = traced_chain_run(
             question=base_q,
             company=req.company,
             year=req.year,
             top_k=max(8, req.top_k),
+            use_openai=not req.no_openai,
         )
         ctxs: List[str] = result.get("contexts", []) or []
         meta = result.get("meta", {})
