@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os, sys, time, uuid
-from datetime import datetime, timezone
 
 # allow "from rag... import ..." in local runs
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -15,6 +14,8 @@ import yaml
 
 # ---- Logging (structlog) ----
 from serving.logging_setup import logger as log  # shared bound logger
+# ---- Settings (config-as-code) ----
+from serving.settings import Settings
 
 # ---- Local modules ----
 from rag.chain import load_chain
@@ -22,16 +23,12 @@ from rag.extract import extract_driver
 from rag.generator import generate_answer
 
 # --------------------------------------------------------------------------------------
-# Config
+# Config (via Settings)
 # --------------------------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DRIVERS_CFG_PATH = os.path.join(BASE_DIR, "config", "drivers.yml")
 
-APP_CFG_PATH = (
-    os.getenv("APP_CFG_PATH")
-    or os.getenv("APP_CONFIG")
-    or os.path.join(BASE_DIR, "config", "app.yaml")
-)
+settings = Settings()  # single source of truth
 
 def _load_yaml(path: str) -> Dict[str, Any]:
     if not os.path.exists(path):
@@ -45,16 +42,16 @@ DRIVERS_CFG: Dict[str, Any] = {}
 # Chain init (test-friendly)
 # --------------------------------------------------------------------------------------
 SKIP_CHAIN_INIT = os.getenv("SKIP_CHAIN_INIT", "").lower() in {"1", "true", "yes"}
-CHAIN = None if SKIP_CHAIN_INIT else load_chain(APP_CFG_PATH)
+CHAIN = None if SKIP_CHAIN_INIT else load_chain(settings.app_cfg_path)
 
 # --------------------------------------------------------------------------------------
 # LangSmith tracing (minimal, version-safe)
 # --------------------------------------------------------------------------------------
-_LANGSMITH_ENABLED = os.getenv("LANGSMITH_TRACING", "").lower() in {"1", "true", "yes"}
+_LANGSMITH_ENABLED = bool(settings.langsmith_tracing)
 try:
     if _LANGSMITH_ENABLED:
         from langsmith import traceable  # type: ignore
-        log.info("langsmith.init", project=os.getenv("LANGSMITH_PROJECT", "IntelSent"))
+        log.info("langsmith.init", project=settings.langsmith_project)
     else:
         # no-op decorator if tracing is off
         def traceable(*args, **kwargs):  # type: ignore
@@ -67,12 +64,13 @@ except Exception as e:
         return _wrap
 
 @traceable(name="query", run_type="chain")
-def traced_chain_run(question: str,
-                     company: Optional[str],
-                     year: Optional[int],
-                     top_k: int,
-                     use_openai: bool) -> Dict[str, Any]:
-    # Inputs are captured by LangSmith via the decorator
+def traced_chain_run(
+    question: str,
+    company: Optional[str],
+    year: Optional[int],
+    top_k: int,
+    use_openai: bool,
+) -> Dict[str, Any]:
     CHAIN.use_openai = use_openai
     out = CHAIN.run(
         question=question,
@@ -80,7 +78,6 @@ def traced_chain_run(question: str,
         year=year,
         top_k=top_k,
     )
-    # Return value is captured as outputs
     return out
 
 # --------------------------------------------------------------------------------------
@@ -160,9 +157,10 @@ def startup() -> None:
     DRIVERS_CFG = _load_yaml(DRIVERS_CFG_PATH)
     log.info(
         "app.startup",
-        app_config=APP_CFG_PATH,
+        app_config=settings.app_cfg_path,
         drivers_cfg_loaded=bool(DRIVERS_CFG),
         chain_initialized=CHAIN is not None,
+        config=settings.redacted(),  # safe view for debugging/demo
     )
 
 # --------------------------------------------------------------------------------------
@@ -173,7 +171,7 @@ def root() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "IntelSent",
-        "app_config": APP_CFG_PATH,
+        "config": settings.redacted(),
         "drivers_cfg_loaded": bool(DRIVERS_CFG),
         "chain_initialized": CHAIN is not None,
     }
