@@ -21,3 +21,8 @@ psycopg[binary]==3.2.10
 openai>=1.40.0
 
 structlog>=23,<24
+
+# config as code
+pydantic-settings==2.4.0
+
+redis>=5

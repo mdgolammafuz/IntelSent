@@ -16,6 +16,8 @@ import yaml
 from serving.logging_setup import logger as log  # shared bound logger
 # ---- Settings (config-as-code) ----
 from serving.settings import Settings
+# ---- Cache (minimal response caching) ----
+from serving.cache import get_cache, make_key
 
 # ---- Local modules ----
 from rag.chain import load_chain
@@ -43,6 +45,11 @@ DRIVERS_CFG: Dict[str, Any] = {}
 # --------------------------------------------------------------------------------------
 SKIP_CHAIN_INIT = os.getenv("SKIP_CHAIN_INIT", "").lower() in {"1", "true", "yes"}
 CHAIN = None if SKIP_CHAIN_INIT else load_chain(settings.app_cfg_path)
+
+# --------------------------------------------------------------------------------------
+# Cache init
+# --------------------------------------------------------------------------------------
+CACHE = get_cache(ttl_s=int(os.getenv("CACHE_TTL_SECONDS", "600")))
 
 # --------------------------------------------------------------------------------------
 # LangSmith tracing (minimal, version-safe)
@@ -199,6 +206,18 @@ def query(req: QueryRequest) -> QueryResponse:
         use_openai=not req.no_openai,
     )
 
+    cache_key = make_key("q:v1", {
+        "text": req.text,
+        "company": req.company,
+        "year": req.year,
+        "top_k": req.top_k,
+        "use_openai": not req.no_openai,
+    })
+    cached = CACHE.get(cache_key)
+    if cached:
+        log.info("cache.hit", route="/query")
+        return QueryResponse(**cached)
+
     out = traced_chain_run(
         question=req.text,
         company=req.company,
@@ -207,6 +226,7 @@ def query(req: QueryRequest) -> QueryResponse:
         use_openai=not req.no_openai,
     )
 
+    CACHE.set(cache_key, out)
     log.info("query.done", contexts=len(out.get("contexts", []) if out else []))
     return QueryResponse(**out)
 
@@ -215,8 +235,22 @@ def driver(req: DriverRequest) -> QueryResponse:
     if CHAIN is None:
         log.warning("chain.not_initialized", route="/driver")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
+
     q_default = "Which product or service was revenue growth driven by?"
     q = (DRIVERS_CFG.get("questions", {}) or {}).get("revenue_driver", q_default)
+
+    cache_key = make_key("driver:v1", {
+        "q": q,
+        "company": req.company,
+        "year": req.year,
+        "top_k": req.top_k,
+        "use_openai": not req.no_openai,
+    })
+    cached = CACHE.get(cache_key)
+    if cached:
+        log.info("cache.hit", route="/driver")
+        return QueryResponse(**cached)
+
     out = traced_chain_run(
         question=q,
         company=req.company,
@@ -224,6 +258,8 @@ def driver(req: DriverRequest) -> QueryResponse:
         top_k=req.top_k,
         use_openai=not req.no_openai,
     )
+
+    CACHE.set(cache_key, out)
     return QueryResponse(**out)
 
 @app.post("/drivers_by_segment")
@@ -231,6 +267,7 @@ def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
     if CHAIN is None:
         log.warning("chain.not_initialized", route="/drivers_by_segment")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
+
     segments: Dict[str, List[str]] = (DRIVERS_CFG.get("segments", {}) or {})
     patterns = (DRIVERS_CFG.get("driver_regex", []) or [])
     q_default = "Which product or service was revenue growth driven by?"
