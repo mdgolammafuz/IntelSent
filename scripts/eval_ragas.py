@@ -115,7 +115,7 @@ def query_api(api: str, q: str, company: Optional[str], year: Optional[int],
     r.raise_for_status()
     data = r.json()
     pred = data.get("answer", "") or ""
-    ctxs = [c.get("text", "") for c in data.get("chunks", [])]
+    ctxs = data.get("contexts") or [c.get("text", "") for c in data.get("chunks", [])] or []
     return pred, ctxs
 
 # -------------------------
