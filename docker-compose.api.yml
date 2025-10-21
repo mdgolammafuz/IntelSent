@@ -5,20 +5,21 @@ services:
       dockerfile: Dockerfile
     image: intelsent-api:latest
     container_name: intelsent-api
+    command: uvicorn serving.api:app --host 0.0.0.0 --port 8000
     depends_on:
       pgvector:
         condition: service_healthy
-    ports:
-      - "8000:8000"
+      intelsent-redis:
+        condition: service_healthy
     environment:
       APP_CONFIG: /app/config/app.yaml
       HF_HOME: /app/.cache/hf
-      # Leave OPENAI_API_KEY empty to avoid any paid usage.
-      # When we want OpenAI, export OPENAI_API_KEY in our shell before `docker compose up`.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: gpt-4o-mini
-      # Force local answers if no key:
       NO_OPENAI: ${NO_OPENAI:-${OPENAI_API_KEY:+0}}
+      REDIS_URL: redis://intelsent-redis:6379/0
+    ports:
+      - "8000:8000"
     volumes:
       - ./config/app.docker.yml:/app/config/app.yaml:ro
       - ./config/drivers.yml:/app/config/drivers.yml:ro

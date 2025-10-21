@@ -1,0 +1,12 @@
+services:
+  intelsent-redis:
+    image: redis:7-alpine
+    container_name: intelsent-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
