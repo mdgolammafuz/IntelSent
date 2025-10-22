@@ -1,36 +1,39 @@
-from __future__ import annotations
+# serving/api.py  (Pydantic v2-safe, no forward-refs)
 
-import os, sys, time, uuid
-
-# allow "from rag... import ..." in local runs
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
+import os
+import sys
+import time
+import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import PlainTextResponse
+# make "rag/..." imports work when running inside container
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from fastapi import FastAPI, HTTPException, Request, Response, Header, Depends, Body
+from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel
 import yaml
 
-# ---- Logging (structlog) ----
-from serving.logging_setup import logger as log  # shared bound logger
-# ---- Settings (config-as-code) ----
+from serving.logging_setup import logger as log
 from serving.settings import Settings
-# ---- Cache (minimal response caching) ----
 from serving.cache import get_cache, make_key
 
-# ---- Local modules ----
 from rag.chain import load_chain
 from rag.extract import extract_driver
 from rag.generator import generate_answer
 
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
 # --------------------------------------------------------------------------------------
-# Config (via Settings)
+# Config / settings
 # --------------------------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DRIVERS_CFG_PATH = os.path.join(BASE_DIR, "config", "drivers.yml")
 
-settings = Settings()  # single source of truth
+settings = Settings()
 
 def _load_yaml(path: str) -> Dict[str, Any]:
     if not os.path.exists(path):
@@ -38,29 +41,55 @@ def _load_yaml(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
-DRIVERS_CFG: Dict[str, Any] = {}
+# --------------------------------------------------------------------------------------
+# Schemas (define BEFORE routes; no forward refs)
+# --------------------------------------------------------------------------------------
+class QueryRequest(BaseModel):
+    text: str
+    company: Optional[str] = None
+    year: Optional[int] = None
+    top_k: int = 5
+    no_openai: bool = False  # if True, force local path
+
+class QueryResponse(BaseModel):
+    answer: str
+    contexts: List[str]
+    meta: Dict[str, Any]
+
+class DriverRequest(BaseModel):
+    company: str
+    year: Optional[int] = None
+    top_k: int = 8
+    no_openai: bool = False
 
 # --------------------------------------------------------------------------------------
-# Chain init (test-friendly)
+# Chain / cache / auth / limiter
 # --------------------------------------------------------------------------------------
 SKIP_CHAIN_INIT = os.getenv("SKIP_CHAIN_INIT", "").lower() in {"1", "true", "yes"}
 CHAIN = None if SKIP_CHAIN_INIT else load_chain(settings.app_cfg_path)
 
-# --------------------------------------------------------------------------------------
-# Cache init
-# --------------------------------------------------------------------------------------
 CACHE = get_cache(ttl_s=int(os.getenv("CACHE_TTL_SECONDS", "600")))
 
-# --------------------------------------------------------------------------------------
-# LangSmith tracing (minimal, version-safe)
-# --------------------------------------------------------------------------------------
+API_KEYS = {k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()}
+
+def require_api_key(x_api_key: Optional[str] = Header(None)):
+    if not API_KEYS:  # dev mode if no keys configured
+        return
+    if x_api_key not in API_KEYS:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    storage_uri=os.getenv("REDIS_URL", "memory://"),
+)
+
+# LangSmith (no-op if disabled)
 _LANGSMITH_ENABLED = bool(settings.langsmith_tracing)
 try:
     if _LANGSMITH_ENABLED:
         from langsmith import traceable  # type: ignore
         log.info("langsmith.init", project=settings.langsmith_project)
     else:
-        # no-op decorator if tracing is off
         def traceable(*args, **kwargs):  # type: ignore
             def _wrap(fn): return fn
             return _wrap
@@ -79,20 +108,21 @@ def traced_chain_run(
     use_openai: bool,
 ) -> Dict[str, Any]:
     CHAIN.use_openai = use_openai
-    out = CHAIN.run(
+    return CHAIN.run(
         question=question,
         company=company,
         year=year,
         top_k=top_k,
     )
-    return out
 
 # --------------------------------------------------------------------------------------
-# FastAPI app + optional ingest router
+# App
 # --------------------------------------------------------------------------------------
-app = FastAPI(title="IntelSent API", version="0.3")
+app = FastAPI(title="IntelSent API", version="0.5")
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
 
-# ---- Minimal structured access logs ----
+# Access log
 @app.middleware("http")
 async def access_log_mw(request: Request, call_next):
     rid = str(uuid.uuid4())
@@ -125,7 +155,11 @@ async def access_log_mw(request: Request, call_next):
         )
         raise
 
-# Optional ingest router
+@app.exception_handler(RateLimitExceeded)
+def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
+
+# Ingest router (optional)
 try:
     from serving.ingest_runner import router as ingest_router
     app.include_router(ingest_router)
@@ -135,29 +169,10 @@ except Exception as e:
     log.warning("ingest.router_not_loaded", error=str(e))
 
 # --------------------------------------------------------------------------------------
-# Schemas
+# Startup
 # --------------------------------------------------------------------------------------
-class QueryRequest(BaseModel):
-    text: str
-    company: Optional[str] = None
-    year: Optional[int] = None
-    top_k: int = 5
-    no_openai: bool = False  # force local answering if True
+DRIVERS_CFG: Dict[str, Any] = {}
 
-class QueryResponse(BaseModel):
-    answer: str
-    contexts: List[str]
-    meta: Dict[str, Any]
-
-class DriverRequest(BaseModel):
-    company: str
-    year: Optional[int] = None
-    top_k: int = 8
-    no_openai: bool = False
-
-# --------------------------------------------------------------------------------------
-# Lifecycle
-# --------------------------------------------------------------------------------------
 @app.on_event("startup")
 def startup() -> None:
     global DRIVERS_CFG
@@ -167,7 +182,7 @@ def startup() -> None:
         app_config=settings.app_cfg_path,
         drivers_cfg_loaded=bool(DRIVERS_CFG),
         chain_initialized=CHAIN is not None,
-        config=settings.redacted(),  # safe view for debugging/demo
+        config=settings.redacted(),
     )
 
 # --------------------------------------------------------------------------------------
@@ -187,13 +202,17 @@ def root() -> Dict[str, Any]:
 def healthz() -> Dict[str, Any]:
     return {"status": "ok"}
 
-# tiny /metrics stub to avoid noisy 404s from scrapers
 @app.get("/metrics", response_class=PlainTextResponse)
 def metrics() -> str:
     return "# intelsent demo metrics\nok 1\n"
 
 @app.post("/query", response_model=QueryResponse)
-def query(req: QueryRequest) -> QueryResponse:
+@limiter.limit("10/minute;2/second")
+def query(
+    request: Request,
+    req: QueryRequest = Body(...),
+    _=Depends(require_api_key),
+) -> QueryResponse:
     if CHAIN is None:
         log.warning("chain.not_initialized", route="/query")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
@@ -231,7 +250,12 @@ def query(req: QueryRequest) -> QueryResponse:
     return QueryResponse(**out)
 
 @app.post("/driver", response_model=QueryResponse)
-def driver(req: DriverRequest) -> QueryResponse:
+@limiter.limit("10/minute")
+def driver(
+    request: Request,
+    req: DriverRequest = Body(...),
+    _=Depends(require_api_key),
+) -> QueryResponse:
     if CHAIN is None:
         log.warning("chain.not_initialized", route="/driver")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")
@@ -263,7 +287,12 @@ def driver(req: DriverRequest) -> QueryResponse:
     return QueryResponse(**out)
 
 @app.post("/drivers_by_segment")
-def drivers_by_segment(req: DriverRequest) -> Dict[str, Any]:
+@limiter.limit("5/minute")
+def drivers_by_segment(
+    request: Request,
+    req: DriverRequest = Body(...),
+    _=Depends(require_api_key),
+) -> Dict[str, Any]:
     if CHAIN is None:
         log.warning("chain.not_initialized", route="/drivers_by_segment")
         raise HTTPException(status_code=503, detail="CHAIN not initialized")

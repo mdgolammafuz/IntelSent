@@ -1,8 +1,39 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+*.tmp
+
+# Environments
+.venv/
 .env
+.env.*
+*.local
+
+# OS / Editors
+.DS_Store
+.vscode/
+.idea/
+
+# Project artifacts
 artifacts/
 datasets/
+reports/
 .qa/
-.DS_Store
 sec-edgar-filings/
+
+# Application data
+/data/*
+!/data/qa/
+# ignore everything inside qa by default...
+/data/qa/*
+# ...but keep this one evaluation file
+!/data/qa/dev.jsonl
+# explicit: never track ingestion stamps
+/data/.ingested/
+
+# Tests / coverage
+.pytest_cache/
+.coverage

@@ -1,0 +1,3 @@
+{"question":"Which product or service was revenue growth driven by?","company":"MSFT","year":2022,"ground_truth":"windows commercial, search & news advertising, xbox hardware and content/services"}
+{"question":"Which product or service was revenue growth driven by?","company":"AAPL","year":2022,"ground_truth":"iphone and services"}
+{"question":"Which product or service was revenue growth driven by?","company":"MSFT","year":2023,"ground_truth":"azure and other cloud services"}

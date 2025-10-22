@@ -1,4 +1,4 @@
-fastapi==0.115.0
+fastapi==0.114.2
 uvicorn[standard]==0.30.6
 PyYAML==6.0.2
 
@@ -7,22 +7,36 @@ regex==2024.9.11
 tqdm==4.66.5
 scikit-learn==1.5.2
 numpy==1.26.4
+
 # Hugging Face stack
 transformers==4.44.2
 sentence-transformers==3.0.1
 peft==0.17.1
 huggingface-hub>=0.33.4
+
 # Torch (CPU only)
 torch==2.2.2
 
 # Postgres client (psycopg v3 with embedded libpq)
-psycopg[binary]==3.2.10
+psycopg[binary]==3.2.9
 
 openai>=1.40.0
 
+#logging
 structlog>=23,<24
 
 # config as code
-pydantic-settings==2.4.0
+pydantic==2.8.2
+starlette==0.38.2
+pydantic-settings<3.0.0,>=2.10.1
 
+#caching
 redis>=5
+
+# rate limit
+slowapi==0.1.9
+limits==3.13.0
+
+# fetch edgar api
+beautifulsoup4>=4.12.3
+requests>=2.32.0
