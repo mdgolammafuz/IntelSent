@@ -19,20 +19,27 @@ __pycache__/
 
 # Project artifacts
 artifacts/
-datasets/
 reports/
 .qa/
-sec-edgar-filings/
+sec-edgar-filings/   # (top-level safety; actual data lives under /data)
 
-# Application data
-/data/*
-!/data/qa/
-# ignore everything inside qa by default...
-/data/qa/*
-# ...but keep this one evaluation file
-!/data/qa/dev.jsonl
-# explicit: never track ingestion stamps
+# -----------------------------
+# Application data (keep code, ignore generated)
+# -----------------------------
+
+# Always ignore ingestion stamps + generated raw/catalog/chunks
 /data/.ingested/
+/data/sec-edgar-filings/
+/data/sec_catalog/
+/data/chunks/
+
+# Keep the Python tools and placeholders inside /data
+!/data/*.py
+!/data/.gitkeep
+
+# QA: track folder but ignore contents by default, keep the dev set
+/data/qa/*
+!/data/qa/dev.jsonl
 
 # Tests / coverage
 .pytest_cache/

@@ -12,10 +12,13 @@ services:
       --timeout-keep-alive 10
       --no-server-header
     environment:
-      SKIP_CHAIN_INIT: "1"
-      # ---- fixed local-only (no OpenAI) ----
+      # ---- force local-only (no OpenAI) ----
       NO_OPENAI: "1"
       OPENAI_API_KEY: ""
+
+      # ---- ensure the chain initializes ----
+      SKIP_CHAIN_INIT: "0"
+
       # ---- app config ----
       API_KEYS: demo-key-123
       APP_CONFIG: /app/config/app.yaml

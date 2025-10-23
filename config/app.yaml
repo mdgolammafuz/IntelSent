@@ -1,18 +1,17 @@
-
 artifacts_dir: artifacts
 
 embedding:
   model_name: sentence-transformers/all-MiniLM-L6-v2
-  device: mps   # "cpu" or "cuda" if available
+  device: cpu  # use "cuda" or "mps" if you truly have them inside the container
 
 retrieval:
-  top_k: 5
+  top_k: 10
   max_k: 10
 
 generation:
-  max_context_chars: 6000
+  max_context_chars: 8000
   model: gpt-4o-mini
-  use_openai: false   # your --no-openai run will work regardless; keep false for now
+  use_openai: false
 
 rerank:
   enabled: false
@@ -20,6 +19,7 @@ rerank:
 
 pgvector:
   enabled: true
-  conn: postgresql://intel:intel@localhost:5432/intelrag
+  # IMPORTANT: inside docker, connect to the service name, not localhost
+  conn: postgresql://intel:intel@pgvector:5432/intelrag
   table: chunks
-  text_col: content   # <- set to your real column name ("content" or "chunk")
+  text_col: text
