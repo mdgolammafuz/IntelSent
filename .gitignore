@@ -19,9 +19,13 @@ __pycache__/
 
 # Project artifacts
 artifacts/
-reports/
 .qa/
-sec-edgar-filings/   # (top-level safety; actual data lives under /data)
+# (top-level safety; actual data lives under /data)
+sec-edgar-filings/   
+# Reports: ignore all, keep the demo eval
+/reports/*
+!/reports/dev.eval.json
+!/reports/.gitkeep
 
 # -----------------------------
 # Application data (keep code, ignore generated)

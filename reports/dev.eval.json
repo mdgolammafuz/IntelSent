@@ -1,0 +1,101 @@
+{
+  "summary": {
+    "n_items": 3,
+    "failed_requests": 1,
+    "request_success_rate": 0.6666666666666666,
+    "latency_ms_overall": {
+      "mean_ms": 154.03,
+      "p50_ms": 34.7,
+      "p95_ms": 376.81,
+      "max_ms": 414.83
+    },
+    "latency_ms_success_only": {
+      "mean_ms": 224.76,
+      "p50_ms": 224.76,
+      "p95_ms": 395.82,
+      "max_ms": 414.83
+    }
+  },
+  "quality_success_only": {
+    "n_success": 2,
+    "exact_match": 0.0,
+    "contains_match": 0.5,
+    "token_f1": 0.13014069264069264,
+    "retrieval_hit": 0.5,
+    "context_hit_rate": 0.1,
+    "mrr": 0.5,
+    "hit@1": 0.5,
+    "hit@3": 0.5,
+    "hit@5": 0.5,
+    "answer_len_tokens_mean": 124.5,
+    "avg_context_len_tokens_mean": 126.5
+  },
+  "items": [
+    {
+      "http_status": 200,
+      "status": "ok",
+      "latency_ms": 34.696,
+      "question": "Which products drove revenue growth?",
+      "ground_truth": "higher net sales of iPhone and Services, partially offset by lower net sales of Mac and iPad",
+      "prediction": "sales increased 1 % or $ 240 million during 2023 compared to 2022. the weakness in foreign currencies relative to the u. s. dollar had a significantly unfavorable year - over - year impact on rest of asia pacific net sales. the net sales increase consisted of higher net sales of iphone and services, partially offset by lower net sales of mac and ipad. apple inc. | 2023 form 10 - k | 21 products and services performance the following table shows net sales by category for 2023, 2022 and 2021 ( dollars in millions ) : 2023 change 2022 change 2021 net sales by category : iphone ( 1 ) $ 200, 583 ( 2 ) % $ 205, 489 7 % $ 191, 973 mac ( 1 ) 29, 357 ( 27 ) % 40, 177 14 % 35, 190 ipad ( 1 ) 28, 300 ( 3 ) % 29, 292 ( 8 ) % 31, 862 wearables, home and accessories ( 1 ) 39, 845 ( 3 ) % 41, 241 7 % 38, 367 services ( 2 ) 85, 200 9 % 78, 129 14 % 68, 425 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 %",
+      "contexts": [
+        "sales increased 1 % or $ 240 million during 2023 compared to 2022. the weakness in foreign currencies relative to the u. s. dollar had a significantly unfavorable year - over - year impact on rest of asia pacific net sales. the net sales increase consisted of higher net sales of iphone and services, partially offset by lower net sales of mac and ipad. apple inc. | 2023 form 10 - k | 21 products and services performance the following table shows net sales by category for 2023, 2022 and 2021 ( dollars in millions ) : 2023 change 2022 change 2021 net sales by category : iphone ( 1 ) $ 200, 583 ( 2 ) % $ 205, 489 7 % $ 191, 973 mac ( 1 ) 29, 357 ( 27 ) % 40, 177 14 % 35, 190 ipad ( 1 ) 28, 300 ( 3 ) % 29, 292 ( 8 ) % 31, 862 wearables, home and accessories ( 1 ) 39, 845 ( 3 ) % 41, 241 7 % 38, 367 services ( 2 ) 85, 200 9 % 78, 129 14 % 68, 425 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 %",
+        "combined net sales of ipad 9th and 10th generation. wearables, home and accessories wearables, home and accessories net sales decreased 3 % or $ 1. 4 billion during 2023 compared to 2022 due primarily to lower net sales of wearables and accessories. services services net sales increased 9 % or $ 7. 1 billion during 2023 compared to 2022 due to higher net sales across all lines of business. apple inc. | 2023 form 10 - k | 22 gross margin products and services gross margin and gross margin percentage for 2023, 2022 and 2021 were as follows ( dollars in millions ) : 2023 2022 2021 gross margin : products $ 108, 803 $ 114, 728 $ 105, 126 services 60, 345 56, 054 47, 710 total gross margin $ 169, 148 $ 170, 782 $ 152, 836 gross margin percentage : products 36. 5 % 36. 3 % 35. 3 % services 70. 8 % 71. 7 % 69. 7 % total gross margin percentage 44. 1 % 43. 3 % 41. 8 % products gross margin products gross margin decreased during 2023 compared to 2022 due to the weakness in foreign currencies relative to the u. s. dollar and lower",
+        ", 845 41, 241 38, 367 services ( 2 ) 85, 200 78, 129 68, 425 total net sales $ 383, 285 $ 394, 328 $ 365, 817 ( 1 ) products net sales include amortization of the deferred value of unspecified software upgrade rights, which are bundled in the sales price of the respective product. ( 2 ) services net sales include amortization of the deferred value of services bundled in the sales price of certain products. total net sales include $ 8. 2 billion of revenue recognized in 2023 that was included in deferred revenue as of september 24, 2022, $ 7. 5 billion of revenue recognized in 2022 that was included in deferred revenue as of september 25, 2021, and $ 6. 7 billion of revenue recognized in 2021 that was included in deferred revenue as of september 26, 2020. the company \u2019 s proportion of net sales by disaggregated revenue source was generally consistent for each reportable segment in note 13, \u201c segment information and geographic data \u201d for 2023, 2022 and 2021, except in greater china, where iphone revenue represented a moderately higher proportion of net sales. as of september 30, 2023 and september 24",
+        "the heading \u201c risk factors. \u201d as a result, the company believes, in general, gross margins will be subject to volatility and downward pressure. operating expenses operating expenses for 2023, 2022 and 2021 were as follows ( dollars in millions ) : 2023 change 2022 change 2021 research and development $ 29, 915 14 % $ 26, 251 20 % $ 21, 914 percentage of total net sales 8 % 7 % 6 % selling, general and administrative $ 24, 932 ( 1 ) % $ 25, 094 14 % $ 21, 973 percentage of total net sales 7 % 6 % 6 % total operating expenses $ 54, 847 7 % $ 51, 345 17 % $ 43, 887 percentage of total net sales 14 % 13 % 12 % research and development the year - over - year growth in r & d expense in 2023 was driven primarily by increases in headcount - related expenses. selling, general and administrative selling, general and administrative expense was relatively flat in 2023 compared to 2022. apple inc. | 2023 form 10 - k | 23 provision for income taxes provision for income taxes, effective tax rate and statutory federal income tax rate for 2023, 2022 and 2021 were as follows ( dollars",
+        "38, 367 services ( 2 ) 85, 200 9 % 78, 129 14 % 68, 425 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 % $ 365, 817 ( 1 ) products net sales include amortization of the deferred value of unspecified software upgrade rights, which are bundled in the sales price of the respective product. ( 2 ) services net sales include amortization of the deferred value of services bundled in the sales price of certain products. iphone iphone net sales decreased 2 % or $ 4. 9 billion during 2023 compared to 2022 due to lower net sales of non - pro iphone models, partially offset by higher net sales of pro iphone models. mac mac net sales decreased 27 % or $ 10. 8 billion during 2023 compared to 2022 due primarily to lower net sales of laptops. ipad ipad net sales decreased 3 % or $ 1. 0 billion during 2023 compared to 2022 due primarily to lower net sales of ipad mini and ipad air, partially offset by the combined net sales of ipad 9th and 10th generation. wearables, home and accessories wearables, home and accessories net sales decreased 3 % or $ 1. 4 billion during 2023 compared to"
+      ],
+      "first_hit_rank": 1,
+      "reciprocal_rank": 1.0,
+      "answer_len_tokens": 116,
+      "avg_context_len_tokens": 125.8,
+      "exact_match": 0,
+      "contains_match": 1,
+      "token_f1": 0.20833333333333334,
+      "retrieval_hit": 1,
+      "context_hit_rate": 0.2
+    },
+    {
+      "http_status": 200,
+      "status": "ok",
+      "latency_ms": 414.828,
+      "question": "Which segment increased year over year?",
+      "ground_truth": "Services net sales increased 9%",
+      "prediction": "in conjunction with the consolidated financial statements and accompanying notes included in part ii, item 8 of this form 10 - k. this item generally discusses 2023 and 2022 items and year - to - year comparisons between 2023 and 2022. discussions of 2021 items and year - to - year comparisons between 2022 and 2021 are not included, and can be found in \u201c management \u2019 s discussion and analysis of financial condition and results of operations \u201d in part ii, item 7 of the company \u2019 s annual report on form 10 - k for the fiscal year ended september 24, 2022. fiscal period the company \u2019 s fiscal year is the 52 - or 53 - week period that ends on the last saturday of september. an additional week is included in the first fiscal quarter every five or six years to realign the company \u2019 s fiscal quarters with calendar quarters, which occurred in the first quarter of 2023. the company \u2019 s fiscal year 2023 spanned 53 weeks, whereas fiscal years 2022 and 2021 spanned 52 weeks each. fiscal year highlights the company \u2019 s total net sales were $ 383. 3 billion and net income was $ 97. 0 billion during 2023. the company \u2019 s total net sales decreased 3 % or $ 11. 0 billion during 2023 compared to",
+      "contexts": [
+        "in conjunction with the consolidated financial statements and accompanying notes included in part ii, item 8 of this form 10 - k. this item generally discusses 2023 and 2022 items and year - to - year comparisons between 2023 and 2022. discussions of 2021 items and year - to - year comparisons between 2022 and 2021 are not included, and can be found in \u201c management \u2019 s discussion and analysis of financial condition and results of operations \u201d in part ii, item 7 of the company \u2019 s annual report on form 10 - k for the fiscal year ended september 24, 2022. fiscal period the company \u2019 s fiscal year is the 52 - or 53 - week period that ends on the last saturday of september. an additional week is included in the first fiscal quarter every five or six years to realign the company \u2019 s fiscal quarters with calendar quarters, which occurred in the first quarter of 2023. the company \u2019 s fiscal year 2023 spanned 53 weeks, whereas fiscal years 2022 and 2021 spanned 52 weeks each. fiscal year highlights the company \u2019 s total net sales were $ 383. 3 billion and net income was $ 97. 0 billion during 2023. the company \u2019 s total net sales decreased 3 % or $ 11. 0 billion during 2023 compared to",
+        "form 10 - k | 20 segment operating performance the following table shows net sales by reportable segment for 2023, 2022 and 2021 ( dollars in millions ) : 2023 change 2022 change 2021 net sales by reportable segment : americas $ 162, 560 ( 4 ) % $ 169, 658 11 % $ 153, 306 europe 94, 294 ( 1 ) % 95, 118 7 % 89, 307 greater china 72, 559 ( 2 ) % 74, 200 9 % 68, 366 japan 24, 257 ( 7 ) % 25, 977 ( 9 ) % 28, 482 rest of asia pacific 29, 615 1 % 29, 375 11 % 26, 356 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 % $ 365, 817 americas americas net sales decreased 4 % or $ 7. 1 billion during 2023 compared to 2022 due to lower net sales of iphone and mac, partially offset by higher net sales of services. europe europe net sales decreased 1 % or $ 824 million during 2023 compared to 2022. the weakness in foreign currencies relative to the u. s. dollar accounted for more than the entire year - over - year decrease in europe net sales, which",
+        "098 $ 35, 233 $ 32, 505 greater china : net sales $ 72, 559 $ 74, 200 $ 68, 366 operating income $ 30, 328 $ 31, 153 $ 28, 504 japan : net sales $ 24, 257 $ 25, 977 $ 28, 482 operating income $ 11, 888 $ 12, 257 $ 12, 798 rest of asia pacific : net sales $ 29, 615 $ 29, 375 $ 26, 356 operating income $ 12, 066 $ 11, 569 $ 9, 817 a reconciliation of the company \u2019 s segment operating income to the consolidated statements of operations for 2023, 2022 and 2021 is as follows ( in millions ) : 2023 2022 2021 segment operating income $ 150, 888 $ 152, 895 $ 137, 006 research and development expense ( 29, 915 ) ( 26, 251 ) ( 21, 914 ) other corporate expenses, net ( 1 ) ( 6, 672 ) ( 7, 207 ) ( 6, 143 ) total operating income $ 114, 301 $ 119, 437 $ 108, 949 ( 1 ) includes corporate marketing expenses, certain share - based compensation expenses, various nonrecurring charges, and other",
+        "sales increased 1 % or $ 240 million during 2023 compared to 2022. the weakness in foreign currencies relative to the u. s. dollar had a significantly unfavorable year - over - year impact on rest of asia pacific net sales. the net sales increase consisted of higher net sales of iphone and services, partially offset by lower net sales of mac and ipad. apple inc. | 2023 form 10 - k | 21 products and services performance the following table shows net sales by category for 2023, 2022 and 2021 ( dollars in millions ) : 2023 change 2022 change 2021 net sales by category : iphone ( 1 ) $ 200, 583 ( 2 ) % $ 205, 489 7 % $ 191, 973 mac ( 1 ) 29, 357 ( 27 ) % 40, 177 14 % 35, 190 ipad ( 1 ) 28, 300 ( 3 ) % 29, 292 ( 8 ) % 31, 862 wearables, home and accessories ( 1 ) 39, 845 ( 3 ) % 41, 241 7 % 38, 367 services ( 2 ) 85, 200 9 % 78, 129 14 % 68, 425 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 %",
+        ", each one is managed separately to better align with the location of the company \u2019 s customers and distribution partners and the unique market dynamics of each geographic region. the company evaluates the performance of its reportable segments based on net sales and operating income. net sales for geographic segments are generally based on the location of customers and sales through the company \u2019 s retail stores located in those geographic locations. operating income for each segment consists of net sales to third parties, related cost of sales, and operating expenses directly attributable to the segment. the information provided to the company \u2019 s chief operating decision maker for purposes of making decisions and assessing segment performance excludes asset information. the following table shows information by reportable segment for 2023, 2022 and 2021 ( in millions ) : 2023 2022 2021 americas : net sales $ 162, 560 $ 169, 658 $ 153, 306 operating income $ 60, 508 $ 62, 683 $ 53, 382 europe : net sales $ 94, 294 $ 95, 118 $ 89, 307 operating income $ 36, 098 $ 35, 233 $ 32, 505 greater china : net sales $ 72, 559 $ 74, 200 $ 68, 366 operating income $ 30, 328 $ 31, 153 $"
+      ],
+      "first_hit_rank": null,
+      "reciprocal_rank": 0.0,
+      "answer_len_tokens": 133,
+      "avg_context_len_tokens": 127.2,
+      "exact_match": 0,
+      "contains_match": 0,
+      "token_f1": 0.051948051948051945,
+      "retrieval_hit": 0,
+      "context_hit_rate": 0.0
+    },
+    {
+      "http_status": 429,
+      "status": "fail",
+      "latency_ms": 12.567,
+      "question": "What happened to Mac net sales?",
+      "ground_truth": "Mac net sales decreased 27%",
+      "prediction": "",
+      "contexts": [],
+      "first_hit_rank": null,
+      "reciprocal_rank": 0.0,
+      "answer_len_tokens": 0,
+      "avg_context_len_tokens": 0.0,
+      "exact_match": 0,
+      "contains_match": 0,
+      "token_f1": 0.0,
+      "retrieval_hit": 0,
+      "context_hit_rate": 0.0
+    }
+  ]
+}
