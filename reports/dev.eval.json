@@ -1,40 +1,40 @@
 {
   "summary": {
     "n_items": 3,
-    "failed_requests": 1,
-    "request_success_rate": 0.6666666666666666,
+    "failed_requests": 0,
+    "request_success_rate": 1.0,
     "latency_ms_overall": {
-      "mean_ms": 154.03,
-      "p50_ms": 34.7,
-      "p95_ms": 376.81,
-      "max_ms": 414.83
+      "mean_ms": 2566.09,
+      "p50_ms": 2431.01,
+      "p95_ms": 2934.95,
+      "max_ms": 2990.94
     },
     "latency_ms_success_only": {
-      "mean_ms": 224.76,
-      "p50_ms": 224.76,
-      "p95_ms": 395.82,
-      "max_ms": 414.83
+      "mean_ms": 2566.09,
+      "p50_ms": 2431.01,
+      "p95_ms": 2934.95,
+      "max_ms": 2990.94
     }
   },
   "quality_success_only": {
-    "n_success": 2,
+    "n_success": 3,
     "exact_match": 0.0,
-    "contains_match": 0.5,
-    "token_f1": 0.13014069264069264,
-    "retrieval_hit": 0.5,
-    "context_hit_rate": 0.1,
+    "contains_match": 0.3333333333333333,
+    "token_f1": 0.11606449106449106,
+    "retrieval_hit": 0.6666666666666666,
+    "context_hit_rate": 0.13333333333333333,
     "mrr": 0.5,
-    "hit@1": 0.5,
-    "hit@3": 0.5,
-    "hit@5": 0.5,
-    "answer_len_tokens_mean": 124.5,
-    "avg_context_len_tokens_mean": 126.5
+    "hit@1": 0.3333333333333333,
+    "hit@3": 0.6666666666666666,
+    "hit@5": 0.6666666666666666,
+    "answer_len_tokens_mean": 121.66666666666667,
+    "avg_context_len_tokens_mean": 129.0
   },
   "items": [
     {
       "http_status": 200,
       "status": "ok",
-      "latency_ms": 34.696,
+      "latency_ms": 2431.005,
       "question": "Which products drove revenue growth?",
       "ground_truth": "higher net sales of iPhone and Services, partially offset by lower net sales of Mac and iPad",
       "prediction": "sales increased 1 % or $ 240 million during 2023 compared to 2022. the weakness in foreign currencies relative to the u. s. dollar had a significantly unfavorable year - over - year impact on rest of asia pacific net sales. the net sales increase consisted of higher net sales of iphone and services, partially offset by lower net sales of mac and ipad. apple inc. | 2023 form 10 - k | 21 products and services performance the following table shows net sales by category for 2023, 2022 and 2021 ( dollars in millions ) : 2023 change 2022 change 2021 net sales by category : iphone ( 1 ) $ 200, 583 ( 2 ) % $ 205, 489 7 % $ 191, 973 mac ( 1 ) 29, 357 ( 27 ) % 40, 177 14 % 35, 190 ipad ( 1 ) 28, 300 ( 3 ) % 29, 292 ( 8 ) % 31, 862 wearables, home and accessories ( 1 ) 39, 845 ( 3 ) % 41, 241 7 % 38, 367 services ( 2 ) 85, 200 9 % 78, 129 14 % 68, 425 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 %",
@@ -58,7 +58,7 @@
     {
       "http_status": 200,
       "status": "ok",
-      "latency_ms": 414.828,
+      "latency_ms": 2990.942,
       "question": "Which segment increased year over year?",
       "ground_truth": "Services net sales increased 9%",
       "prediction": "in conjunction with the consolidated financial statements and accompanying notes included in part ii, item 8 of this form 10 - k. this item generally discusses 2023 and 2022 items and year - to - year comparisons between 2023 and 2022. discussions of 2021 items and year - to - year comparisons between 2022 and 2021 are not included, and can be found in \u201c management \u2019 s discussion and analysis of financial condition and results of operations \u201d in part ii, item 7 of the company \u2019 s annual report on form 10 - k for the fiscal year ended september 24, 2022. fiscal period the company \u2019 s fiscal year is the 52 - or 53 - week period that ends on the last saturday of september. an additional week is included in the first fiscal quarter every five or six years to realign the company \u2019 s fiscal quarters with calendar quarters, which occurred in the first quarter of 2023. the company \u2019 s fiscal year 2023 spanned 53 weeks, whereas fiscal years 2022 and 2021 spanned 52 weeks each. fiscal year highlights the company \u2019 s total net sales were $ 383. 3 billion and net income was $ 97. 0 billion during 2023. the company \u2019 s total net sales decreased 3 % or $ 11. 0 billion during 2023 compared to",
@@ -80,22 +80,28 @@
       "context_hit_rate": 0.0
     },
     {
-      "http_status": 429,
-      "status": "fail",
-      "latency_ms": 12.567,
+      "http_status": 200,
+      "status": "ok",
+      "latency_ms": 2276.331,
       "question": "What happened to Mac net sales?",
       "ground_truth": "Mac net sales decreased 27%",
-      "prediction": "",
-      "contexts": [],
-      "first_hit_rank": null,
-      "reciprocal_rank": 0.0,
-      "answer_len_tokens": 0,
-      "avg_context_len_tokens": 0.0,
+      "prediction": "sales increased 1 % or $ 240 million during 2023 compared to 2022. the weakness in foreign currencies relative to the u. s. dollar had a significantly unfavorable year - over - year impact on rest of asia pacific net sales. the net sales increase consisted of higher net sales of iphone and services, partially offset by lower net sales of mac and ipad. apple inc. | 2023 form 10 - k | 21 products and services performance the following table shows net sales by category for 2023, 2022 and 2021 ( dollars in millions ) : 2023 change 2022 change 2021 net sales by category : iphone ( 1 ) $ 200, 583 ( 2 ) % $ 205, 489 7 % $ 191, 973 mac ( 1 ) 29, 357 ( 27 ) % 40, 177 14 % 35, 190 ipad ( 1 ) 28, 300 ( 3 ) % 29, 292 ( 8 ) % 31, 862 wearables, home and accessories ( 1 ) 39, 845 ( 3 ) % 41, 241 7 % 38, 367 services ( 2 ) 85, 200 9 % 78, 129 14 % 68, 425 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 %",
+      "contexts": [
+        "sales increased 1 % or $ 240 million during 2023 compared to 2022. the weakness in foreign currencies relative to the u. s. dollar had a significantly unfavorable year - over - year impact on rest of asia pacific net sales. the net sales increase consisted of higher net sales of iphone and services, partially offset by lower net sales of mac and ipad. apple inc. | 2023 form 10 - k | 21 products and services performance the following table shows net sales by category for 2023, 2022 and 2021 ( dollars in millions ) : 2023 change 2022 change 2021 net sales by category : iphone ( 1 ) $ 200, 583 ( 2 ) % $ 205, 489 7 % $ 191, 973 mac ( 1 ) 29, 357 ( 27 ) % 40, 177 14 % 35, 190 ipad ( 1 ) 28, 300 ( 3 ) % 29, 292 ( 8 ) % 31, 862 wearables, home and accessories ( 1 ) 39, 845 ( 3 ) % 41, 241 7 % 38, 367 services ( 2 ) 85, 200 9 % 78, 129 14 % 68, 425 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 %",
+        "38, 367 services ( 2 ) 85, 200 9 % 78, 129 14 % 68, 425 total net sales $ 383, 285 ( 3 ) % $ 394, 328 8 % $ 365, 817 ( 1 ) products net sales include amortization of the deferred value of unspecified software upgrade rights, which are bundled in the sales price of the respective product. ( 2 ) services net sales include amortization of the deferred value of services bundled in the sales price of certain products. iphone iphone net sales decreased 2 % or $ 4. 9 billion during 2023 compared to 2022 due to lower net sales of non - pro iphone models, partially offset by higher net sales of pro iphone models. mac mac net sales decreased 27 % or $ 10. 8 billion during 2023 compared to 2022 due primarily to lower net sales of laptops. ipad ipad net sales decreased 3 % or $ 1. 0 billion during 2023 compared to 2022 due primarily to lower net sales of ipad mini and ipad air, partially offset by the combined net sales of ipad 9th and 10th generation. wearables, home and accessories wearables, home and accessories net sales decreased 3 % or $ 1. 4 billion during 2023 compared to",
+        "include intellectual property owned by third parties. it may be necessary in the future to seek or renew licenses relating to various aspects of the company \u2019 s products, processes and services. while the company has generally been able to obtain such licenses on commercially reasonable terms in the past, there is no guarantee that such licenses could be obtained in the future on reasonable terms or at all. apple inc. | 2023 form 10 - k | 3 business seasonality and product introductions the company has historically experienced higher net sales in its first quarter compared to other quarters in its fiscal year due in part to seasonal holiday demand. additionally, new product and service introductions can significantly impact net sales, cost of sales and operating expenses. the timing of product introductions can also impact the company \u2019 s net sales to its indirect distribution channels as these channels are filled with new inventory following a product launch, and channel inventory of an older product often declines as the launch of a newer product approaches. net sales can also be affected when consumers and distributors anticipate a product introduction. human capital the company believes it has a talented, motivated and dedicated team, and works to create an inclusive, safe and supportive environment for all of its team members. as of september 30, 2023, the company had approximately 161, 000 full",
+        "combined net sales of ipad 9th and 10th generation. wearables, home and accessories wearables, home and accessories net sales decreased 3 % or $ 1. 4 billion during 2023 compared to 2022 due primarily to lower net sales of wearables and accessories. services services net sales increased 9 % or $ 7. 1 billion during 2023 compared to 2022 due to higher net sales across all lines of business. apple inc. | 2023 form 10 - k | 22 gross margin products and services gross margin and gross margin percentage for 2023, 2022 and 2021 were as follows ( dollars in millions ) : 2023 2022 2021 gross margin : products $ 108, 803 $ 114, 728 $ 105, 126 services 60, 345 56, 054 47, 710 total gross margin $ 169, 148 $ 170, 782 $ 152, 836 gross margin percentage : products 36. 5 % 36. 3 % 35. 3 % services 70. 8 % 71. 7 % 69. 7 % total gross margin percentage 44. 1 % 43. 3 % 41. 8 % products gross margin products gross margin decreased during 2023 compared to 2022 due to the weakness in foreign currencies relative to the u. s. dollar and lower",
+        "$ 383. 3 billion and net income was $ 97. 0 billion during 2023. the company \u2019 s total net sales decreased 3 % or $ 11. 0 billion during 2023 compared to 2022. the weakness in foreign currencies relative to the u. s. dollar accounted for more than the entire year - over - year decrease in total net sales, which consisted primarily of lower net sales of mac and iphone, partially offset by higher net sales of services. the company announces new product, service and software offerings at various times during the year. significant announcements during fiscal year 2023 included the following : first quarter 2023 : \u2022 ipad and ipad pro ; \u2022 next - generation apple tv 4k ; and \u2022 mls season pass, a major league soccer subscription streaming service. second quarter 2023 : \u2022 macbook pro 14 \u201d, macbook pro 16 \u201d and mac mini ; and \u2022 second - generation homepod. third quarter 2023 : \u2022 macbook air 15 \u201d, mac studio and mac pro ; \u2022 apple vision pro\u2122, the company \u2019 s first spatial computer featuring its new visionos\u2122, expected to be available in early calendar year 2024 ; and \u2022 ios 17, macos sonoma, ipados 17, tvos 17 and watchos"
+      ],
+      "first_hit_rank": 2,
+      "reciprocal_rank": 0.5,
+      "answer_len_tokens": 116,
+      "avg_context_len_tokens": 134.0,
       "exact_match": 0,
       "contains_match": 0,
-      "token_f1": 0.0,
-      "retrieval_hit": 0,
-      "context_hit_rate": 0.0
+      "token_f1": 0.0879120879120879,
+      "retrieval_hit": 1,
+      "context_hit_rate": 0.2
     }
   ]
 }
