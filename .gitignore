@@ -48,3 +48,7 @@ sec-edgar-filings/
 # Tests / coverage
 .pytest_cache/
 .coverage
+
+# UI
+/ui/node_modules
+/ui/dist
