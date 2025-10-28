@@ -172,7 +172,7 @@ export default function App ()
       </div>
 
       <div style={ { marginTop: "20px", color: "#666", fontSize: "14px" } }>
-        API: { API_BASE ? API_BASE : "(not set)" } · Key: { API_KEY ? "configured" : "missing" }
+        API: { API_BASE || "(not set)" } · Key: { API_KEY ? `set (${ API_KEY.slice( 0, 8 ) }…)` : "missing" }
       </div>
     </div>
   );
