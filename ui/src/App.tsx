@@ -1,51 +1,179 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from "react";
-import { queryApi } from "./api";
+
+type QueryResponse = {
+  answer: string;
+  contexts: string[];
+  meta?: Record<string, unknown>;
+};
+
+const API_BASE = import.meta.env.VITE_API_BASE as string;
+const API_KEY = import.meta.env.VITE_API_KEY as string;
 
 export default function App ()
 {
-  const [ text, setText ] = useState( "Which products drove revenue growth?" );
-  const [ company, setCompany ] = useState( "AAPL" );
-  const [ year, setYear ] = useState( 2023 );
-  const [ ans, setAns ] = useState<string>( "" );
-  const [ ctxCount, setCtxCount ] = useState<number>( 0 );
-  const [ msg, setMsg ] = useState<string>( "" );
+  const [ text, setText ] = useState<string>( "Which products drove revenue growth?" );
+  const [ company, setCompany ] = useState<string>( "AAPL" );
+  const [ year, setYear ] = useState<string>( "2023" );
 
-  const ask = async () =>
+  const [ answer, setAnswer ] = useState<string>( "" );
+  const [ contexts, setContexts ] = useState<string[]>( [] );
+  const [ loading, setLoading ] = useState<boolean>( false );
+  const [ err, setErr ] = useState<string>( "" );
+
+  async function ask ( e: React.FormEvent )
   {
-    setMsg( "…" );
+    e.preventDefault();
+    setErr( "" );
+    setAnswer( "" );
+    setContexts( [] );
+    setLoading( true );
+
     try
     {
-      const res = await queryApi( { text, company, year } );
-      setAns( res.answer || "" );
-      setCtxCount( ( res.contexts || [] ).length );
-      setMsg( "" );
-      if ( !res.contexts?.length ) setMsg( `No indexed filings for ${ company } ${ year }. Ingest first.` );
-    } catch ( e: any )
+      const qs = new URLSearchParams( {
+        text,
+        company: company.trim(),
+        year: year.trim() ? String( Number( year.trim() ) ) : "",
+        top_k: "3",
+        no_openai: "true",
+        api_key: API_KEY, // via query param to avoid preflight
+      } );
+
+      const res = await fetch( `${ API_BASE }/query_min?${ qs.toString() }`, { method: "GET" } );
+
+      if ( !res.ok )
+      {
+        const msg = await res.text().catch( () => "" );
+        throw new Error( `HTTP ${ res.status } ${ res.statusText } ${ msg || "" }`.trim() );
+      }
+
+      const data: QueryResponse = await res.json();
+      setAnswer( data.answer || "" );
+      setContexts( Array.isArray( data.contexts ) ? data.contexts : [] );
+    } catch ( err: unknown )
     {
-      setMsg( e.message || "Error" );
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String( ( err as { message?: string } ).message )
+          : String( err );
+      setErr( msg || "network error" );
+    } finally
+    {
+      setLoading( false );
     }
-  };
+  }
 
   return (
-    <div style={ { maxWidth: 720, margin: "40px auto", fontFamily: "system-ui, sans-serif" } }>
-      <h1>IntelSent Demo</h1>
-      <div style={ { display: "grid", gap: 8 } }>
-        <input value={ text } onChange={ e => setText( e.target.value ) } placeholder="Question" />
-        <div style={ { display: "flex", gap: 8 } }>
-          <input value={ company } onChange={ e => setCompany( e.target.value.toUpperCase() ) } style={ { width: 120 } } placeholder="Company" />
-          <input type="number" value={ year } onChange={ e => setYear( parseInt( e.target.value || "0" ) ) } style={ { width: 120 } } placeholder="Year" />
-          <button onClick={ ask }>Ask</button>
+    <div
+      style={ {
+        fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial",
+        padding: "28px",
+        maxWidth: "980px",
+        margin: "0 auto",
+        lineHeight: 1.6,
+        fontSize: "18px",
+      } }
+    >
+      <h1 style={ { fontSize: "30px", marginBottom: "16px" } }>IntelSent — Demo UI</h1>
+
+      <form onSubmit={ ask } style={ { display: "grid", gap: "12px", marginBottom: "16px" } }>
+        <label style={ { display: "grid", gap: "6px" } }>
+          <span>Question</span>
+          <input
+            value={ text }
+            onChange={ ( e ) => setText( e.target.value ) }
+            placeholder="Ask something…"
+            style={ { padding: "12px", border: "1px solid #ddd", borderRadius: "8px" } }
+          />
+        </label>
+
+        <div style={ { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" } }>
+          <label style={ { display: "grid", gap: "6px" } }>
+            <span>Company</span>
+            <input
+              value={ company }
+              onChange={ ( e ) => setCompany( e.target.value.toUpperCase() ) }
+              placeholder="AAPL"
+              style={ { padding: "12px", border: "1px solid #ddd", borderRadius: "8px" } }
+            />
+          </label>
+          <label style={ { display: "grid", gap: "6px" } }>
+            <span>Year</span>
+            <input
+              value={ year }
+              onChange={ ( e ) => setYear( e.target.value ) }
+              placeholder="2023"
+              inputMode="numeric"
+              style={ { padding: "12px", border: "1px solid #ddd", borderRadius: "8px" } }
+            />
+          </label>
         </div>
-      </div>
-      { msg && <p style={ { color: "#a00" } }>{ msg }</p> }
-      { ans && (
-        <div style={ { marginTop: 12, padding: 12, border: "1px solid #ddd", borderRadius: 8 } }>
-          <b>Answer</b>
-          <p>{ ans }</p>
-          <small>contexts: { ctxCount }</small>
+
+        <button
+          type="submit"
+          disabled={ loading }
+          style={ {
+            padding: "12px 16px",
+            borderRadius: "10px",
+            border: "1px solid #111",
+            background: loading ? "#f3f3f3" : "#111",
+            color: loading ? "#111" : "#fff",
+            fontWeight: 600,
+            cursor: loading ? "default" : "pointer",
+            marginTop: "4px",
+          } }
+        >
+          { loading ? "…" : "Ask" }
+        </button>
+      </form>
+
+      { err && (
+        <div style={ { color: "#b00020", marginBottom: "12px", whiteSpace: "pre-wrap" } }>
+          Error: { err }
         </div>
       ) }
+
+      <div style={ { display: "grid", gap: "12px" } }>
+        <div>
+          <h2 style={ { fontSize: "22px", marginBottom: "8px" } }>Answer</h2>
+          <div
+            style={ {
+              border: "1px solid #eee",
+              borderRadius: "8px",
+              padding: "12px",
+              minHeight: "92px",
+              background: "#fafafa",
+              whiteSpace: "pre-wrap",
+            } }
+          >
+            { answer || "—" }
+          </div>
+        </div>
+
+        <div>
+          <h2 style={ { fontSize: "22px", marginBottom: "8px" } }>Contexts ({ contexts.length })</h2>
+          <ol style={ { display: "grid", gap: "8px", paddingLeft: "22px" } }>
+            { contexts.map( ( c, i ) => (
+              <li
+                key={ i }
+                style={ {
+                  background: "#fcfcfc",
+                  padding: "10px",
+                  borderRadius: "8px",
+                  border: "1px solid #eee",
+                } }
+              >
+                <div style={ { whiteSpace: "pre-wrap" } }>{ c }</div>
+              </li>
+            ) ) }
+            { !contexts.length && <div>—</div> }
+          </ol>
+        </div>
+      </div>
+
+      <div style={ { marginTop: "20px", color: "#666", fontSize: "14px" } }>
+        API: { API_BASE ? API_BASE : "(not set)" } · Key: { API_KEY ? "configured" : "missing" }
+      </div>
     </div>
   );
 }
