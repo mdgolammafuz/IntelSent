@@ -1,0 +1,45 @@
+# Makefile.a2a — minimal A2A demo helpers
+# Usage:
+#   make -f Makefile.a2a a2a
+#   make -f Makefile.a2a a2a A2A_COMPANY=MSFT A2A_YEAR=2023
+
+# Defaults (override on the CLI if needed)
+A2A_COMPANY ?= AAPL
+A2A_YEAR    ?= 2023
+A2A_Q       ?= Which products drove revenue growth?
+
+API         ?= http://localhost:8000
+KEY         ?= demo-key-123
+CONTAINER   ?= intelsent-api
+DB_CONT     ?= intel_pgvector
+PREFECT_URL ?= http://127.0.0.1:4200/api
+
+COMPOSE     ?= docker compose -f docker-compose.api.yml
+
+.PHONY: a2a api-up api-logs api-health pg-count query ui
+
+a2a:
+	@echo "▶ A2A: $(A2A_COMPANY) $(A2A_YEAR)"
+	@prefect config set PREFECT_API_URL=$(PREFECT_URL) >/dev/null
+	@INTELSENT_API=$(API) INTELSENT_KEY=$(KEY) INTELSENT_CONTAINER=$(CONTAINER) \
+	A2A_COMPANY=$(A2A_COMPANY) A2A_YEAR=$(A2A_YEAR) A2A_Q="$(A2A_Q)" \
+	python flows/prefect_a2a.py
+
+api-up:
+	$(COMPOSE) up -d --build api
+
+api-logs:
+	$(COMPOSE) logs -f api
+
+api-health:
+	@curl -fsS $(API)/healthz && echo "  ok"
+
+pg-count:
+	@docker exec -it $(DB_CONT) psql -U intel -d intelrag -c "select count(*) from chunks;"
+
+query:
+	@curl -sS "$(API)/query_min?text=$$(python -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$(A2A_Q)")&company=$(A2A_COMPANY)&year=$(A2A_YEAR)&top_k=3&no_openai=true&api_key=$(KEY)" | jq
+
+ui:
+	@echo "Prefect UI → $(PREFECT_URL)"; \
+	open "http://127.0.0.1:4200/dashboard" 2>/dev/null || true

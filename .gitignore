@@ -1,4 +1,6 @@
+# -----------------------------
 # Python
+# -----------------------------
 __pycache__/
 *.py[cod]
 *.pyo
@@ -12,16 +14,38 @@ __pycache__/
 .env.*
 *.local
 
+# Tests / coverage
+.pytest_cache/
+.coverage
+
+# -----------------------------
 # OS / Editors
+# -----------------------------
 .DS_Store
 .vscode/
 .idea/
 
+# -----------------------------
+# Prefect (local server/db)
+# -----------------------------
+.prefect/
+.prefect.orion.db
+.prefect.orion.db-*
+
+# -----------------------------
+# Docker / local config
+# -----------------------------
+# Keep committed configs (e.g., app.docker.yml). Ignore local override if you create one.
+config/app.yaml
+
+# -----------------------------
 # Project artifacts
+# -----------------------------
 artifacts/
 .qa/
 # (top-level safety; actual data lives under /data)
-sec-edgar-filings/   
+sec-edgar-filings/
+
 # Reports: ignore all, keep the demo eval
 /reports/*
 !/reports/dev.eval.json
@@ -30,8 +54,6 @@ sec-edgar-filings/
 # -----------------------------
 # Application data (keep code, ignore generated)
 # -----------------------------
-
-# Always ignore ingestion stamps + generated raw/catalog/chunks
 /data/.ingested/
 /data/sec-edgar-filings/
 /data/sec_catalog/
@@ -45,10 +67,8 @@ sec-edgar-filings/
 /data/qa/*
 !/data/qa/dev.jsonl
 
-# Tests / coverage
-.pytest_cache/
-.coverage
-
+# -----------------------------
 # UI
+# -----------------------------
 /ui/node_modules
 /ui/dist
