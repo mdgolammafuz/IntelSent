@@ -74,7 +74,7 @@ export default function App ()
         fontSize: "18px",
       } }
     >
-      <h1 style={ { fontSize: "30px", marginBottom: "16px" } }>IntelSent — Demo UI</h1>
+      <h1 style={ { fontSize: "30px", marginBottom: "16px" } }>IntelSent — Demo UI v2</h1>
 
       <form onSubmit={ ask } style={ { display: "grid", gap: "12px", marginBottom: "16px" } }>
         <label style={ { display: "grid", gap: "6px" } }>
