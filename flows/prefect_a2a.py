@@ -1,10 +1,14 @@
-
+# flows/prefect_a2a.py
 from prefect import flow, task
 import os, sys, subprocess, requests
 
 API = os.getenv("INTELSENT_API", "http://localhost:8000")
-KEY = os.getenv("INTELSENT_KEY", "demo-key-123")
 CONTAINER = os.getenv("INTELSENT_CONTAINER", "intelsent-api")
+
+# 🔒 Require key from env; no default
+KEY = os.getenv("INTELSENT_KEY")
+if not KEY:
+    raise SystemExit("INTELSENT_KEY is not set. Export INTELSENT_KEY before running.")
 H = {"X-API-Key": KEY}
 
 def _dex(cmd: str) -> str:

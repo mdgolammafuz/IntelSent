@@ -8,15 +8,25 @@
 A2A_COMPANY ?= AAPL
 A2A_YEAR    ?= 2023
 A2A_Q       ?= Which products drove revenue growth?
-A2A_RESET   ?= 0        # 1 = TRUNCATE chunks before embed (prevents duplicates)
+A2A_RESET   ?= 0
 
 API         ?= http://localhost:8000
-KEY         ?= demo-key-123
 CONTAINER   ?= intelsent-api
 DB_CONT     ?= intel_pgvector
 PREFECT_URL ?= http://127.0.0.1:4200/api
 
 COMPOSE     ?= docker compose -f docker-compose.api.yml
+
+# Load .env if present (gitignored)
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
+# Guard: require KEY to be set (used for INTELSENT_KEY and query_min)
+ifeq ($(strip $(KEY)),)
+$(error KEY is not set. Export KEY=... or put KEY=... in .env)
+endif
 
 .PHONY: a2a api-up api-logs api-health pg-count query ui reset-chunks
 

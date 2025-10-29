@@ -20,7 +20,7 @@ services:
       SKIP_CHAIN_INIT: "0"
 
       # ---- app config ----
-      API_KEYS: demo-key-123
+      API_KEYS: ${API_KEYS}          # 🔒 from your shell/.env (no default here)
       APP_CONFIG: /app/config/app.yaml
       HF_HOME: /app/.cache/hf
       REDIS_URL: redis://intelsent-redis:6379/0
@@ -42,7 +42,6 @@ services:
     depends_on:
       intelsent-redis:
         condition: service_healthy
-      # If you keep pgvector, gate on it; otherwise delete this whole service.
       pgvector:
         condition: service_healthy
 
@@ -56,7 +55,6 @@ services:
       timeout: 2s
       retries: 30
 
-  # Remove this whole block if you’re not using Postgres/pgvector.
   pgvector:
     image: ankane/pgvector:latest
     container_name: intel_pgvector
