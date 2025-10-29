@@ -44,3 +44,6 @@ limits==3.13.0
 
 # OpenAI client (optional)
 openai>=1.40.0
+
+# Observability / Tracing
+langsmith>=0.1.90

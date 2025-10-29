@@ -20,7 +20,7 @@ services:
       SKIP_CHAIN_INIT: "0"
 
       # ---- app config ----
-      API_KEYS: ${API_KEYS}          # 🔒 from your shell/.env (no default here)
+      API_KEYS: ${API_KEYS}          # from your shell/.env (no default here)
       APP_CONFIG: /app/config/app.yaml
       HF_HOME: /app/.cache/hf
       REDIS_URL: redis://intelsent-redis:6379/0

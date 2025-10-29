@@ -45,6 +45,15 @@ def _load_yaml(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
+def _langsmith_env() -> Dict[str, Any]:
+    """Non-secret snapshot of LangSmith env flags (for debugging on Render)."""
+    return {
+        "LANGCHAIN_TRACING_V2": bool(os.getenv("LANGCHAIN_TRACING_V2")),
+        "LANGCHAIN_API_KEY_set": bool(os.getenv("LANGCHAIN_API_KEY")),
+        "LANGCHAIN_PROJECT": os.getenv("LANGCHAIN_PROJECT"),
+        "LANGCHAIN_ENDPOINT_set": bool(os.getenv("LANGCHAIN_ENDPOINT")),
+    }
+
 # --------------------------------------------------------------------------------------
 # Schemas
 # --------------------------------------------------------------------------------------
@@ -90,8 +99,16 @@ def require_api_key(request: Request, x_api_key: Optional[str] = Header(None)):
 limiter = Limiter(key_func=get_remote_address, storage_uri=os.getenv("REDIS_URL","memory://"))
 
 # LangSmith (safe no-op if unavailable)
+_ls_import_ok = False
+_ls_version = None
 try:
+    import langsmith  # type: ignore
     from langsmith import traceable  # type: ignore
+    _ls_import_ok = True
+    try:
+        _ls_version = getattr(langsmith, "__version__", None)
+    except Exception:
+        _ls_version = None
 except Exception:
     def traceable(*args, **kwargs):
         def _wrap(fn): return fn
@@ -101,6 +118,11 @@ except Exception:
 def traced_chain_run(question: str, company: Optional[str], year: Optional[int], top_k: int, use_openai: bool) -> Dict[str, Any]:
     CHAIN.use_openai = use_openai
     return CHAIN.run(question=question, company=company, year=year, top_k=top_k)
+
+@traceable(name="ls-smoke", run_type="chain")
+def _ls_smoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # tiny function only to emit a LangSmith run
+    return {"ok": True, "echo": payload}
 
 # --------------------------------------------------------------------------------------
 # App (CORS FIRST)
@@ -233,6 +255,9 @@ def startup() -> None:
         drivers_cfg_loaded=bool(DRIVERS_CFG),
         chain_initialized=CHAIN is not None,
         config=settings.redacted(),
+        langsmith_env=_langsmith_env(),
+        langsmith_import_ok=_ls_import_ok,
+        langsmith_version=_ls_version,
     )
 
 # --------------------------------------------------------------------------------------
@@ -246,6 +271,9 @@ def root() -> Dict[str, Any]:
         "config": settings.redacted(),
         "drivers_cfg_loaded": bool(DRIVERS_CFG),
         "chain_initialized": CHAIN is not None,
+        "langsmith_env": _langsmith_env(),   # shows if LS env reached the process
+        "langsmith_import_ok": _ls_import_ok,
+        "langsmith_version": _ls_version,
     }
 
 @app.get("/healthz")
@@ -255,6 +283,23 @@ def healthz() -> Dict[str, Any]:
 @app.get("/metrics", response_class=PlainTextResponse)
 def metrics() -> str:
     return "# intelsent demo metrics\nok 1\n"
+
+@app.get("/debug/langsmith")
+def debug_langsmith(request: Request) -> Dict[str, Any]:
+    _check_key(None, request)  # respect API key if configured
+    return _langsmith_env() | {"import_ok": _ls_import_ok, "version": _ls_version}
+
+@app.get("/debug/ls_imports")
+def debug_ls_imports(request: Request) -> Dict[str, Any]:
+    _check_key(None, request)
+    return {"import_ok": _ls_import_ok, "version": _ls_version}
+
+@app.get("/debug/ls_emit")
+def debug_ls_emit(request: Request) -> Dict[str, Any]:
+    _check_key(None, request)
+    ts = int(time.time())
+    out = _ls_smoke({"ts": ts, "note": "manual-debug"})
+    return {"emitted": True, "ts": ts, "result": out}
 
 # Keep POST /query for API clients
 @app.post("/query", response_model=QueryResponse)
