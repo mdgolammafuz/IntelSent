@@ -2,11 +2,13 @@
 # Usage:
 #   make -f Makefile.a2a a2a
 #   make -f Makefile.a2a a2a A2A_COMPANY=MSFT A2A_YEAR=2023
+#   make -f Makefile.a2a a2a A2A_RESET=1   # optional: truncate chunks before embedding
 
 # Defaults (override on the CLI if needed)
 A2A_COMPANY ?= AAPL
 A2A_YEAR    ?= 2023
 A2A_Q       ?= Which products drove revenue growth?
+A2A_RESET   ?= 0        # 1 = TRUNCATE chunks before embed (prevents duplicates)
 
 API         ?= http://localhost:8000
 KEY         ?= demo-key-123
@@ -16,11 +18,14 @@ PREFECT_URL ?= http://127.0.0.1:4200/api
 
 COMPOSE     ?= docker compose -f docker-compose.api.yml
 
-.PHONY: a2a api-up api-logs api-health pg-count query ui
+.PHONY: a2a api-up api-logs api-health pg-count query ui reset-chunks
 
 a2a:
-	@echo "▶ A2A: $(A2A_COMPANY) $(A2A_YEAR)"
 	@prefect config set PREFECT_API_URL=$(PREFECT_URL) >/dev/null
+	@if [ "$(A2A_RESET)" = "1" ]; then \
+		echo "• resetting pgvector table 'chunks'…"; \
+		docker exec -i $(DB_CONT) psql -U intel -d intelrag -c "TRUNCATE TABLE chunks;"; \
+	fi
 	@INTELSENT_API=$(API) INTELSENT_KEY=$(KEY) INTELSENT_CONTAINER=$(CONTAINER) \
 	A2A_COMPANY=$(A2A_COMPANY) A2A_YEAR=$(A2A_YEAR) A2A_Q="$(A2A_Q)" \
 	python flows/prefect_a2a.py
@@ -43,3 +48,6 @@ query:
 ui:
 	@echo "Prefect UI → $(PREFECT_URL)"; \
 	open "http://127.0.0.1:4200/dashboard" 2>/dev/null || true
+
+reset-chunks:
+	@docker exec -i $(DB_CONT) psql -U intel -d intelrag -c "TRUNCATE TABLE chunks;"
