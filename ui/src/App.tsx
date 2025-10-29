@@ -83,6 +83,7 @@ export default function App ()
             value={ text }
             onChange={ ( e ) => setText( e.target.value ) }
             placeholder="Ask something…"
+            disabled={ loading }
             style={ { padding: "12px", border: "1px solid #ddd", borderRadius: "8px" } }
           />
         </label>
@@ -94,6 +95,7 @@ export default function App ()
               value={ company }
               onChange={ ( e ) => setCompany( e.target.value.toUpperCase() ) }
               placeholder="AAPL"
+              disabled={ loading }
               style={ { padding: "12px", border: "1px solid #ddd", borderRadius: "8px" } }
             />
           </label>
@@ -104,6 +106,7 @@ export default function App ()
               onChange={ ( e ) => setYear( e.target.value ) }
               placeholder="2023"
               inputMode="numeric"
+              disabled={ loading }
               style={ { padding: "12px", border: "1px solid #ddd", borderRadius: "8px" } }
             />
           </label>
@@ -121,16 +124,47 @@ export default function App ()
             fontWeight: 600,
             cursor: loading ? "default" : "pointer",
             marginTop: "4px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "10px",
           } }
+          aria-busy={ loading }
+          aria-live="polite"
         >
-          { loading ? "…" : "Ask" }
+          { loading ? (
+            <>
+              {/* tiny inline SVG spinner */ }
+              <svg width="18" height="18" viewBox="0 0 50 50" aria-hidden="true" role="img">
+                <circle
+                  cx="25"
+                  cy="25"
+                  r="20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="5"
+                  strokeOpacity="0.25"
+                />
+                <path d="M25 5 a20 20 0 0 1 20 20" fill="none" stroke="currentColor" strokeWidth="5">
+                  <animateTransform
+                    attributeName="transform"
+                    type="rotate"
+                    from="0 25 25"
+                    to="360 25 25"
+                    dur="0.8s"
+                    repeatCount="indefinite"
+                  />
+                </path>
+              </svg>
+              Asking…
+            </>
+          ) : (
+            "Ask"
+          ) }
         </button>
       </form>
 
       { err && (
-        <div style={ { color: "#b00020", marginBottom: "12px", whiteSpace: "pre-wrap" } }>
-          Error: { err }
-        </div>
+        <div style={ { color: "#b00020", marginBottom: "12px", whiteSpace: "pre-wrap" } }>Error: { err }</div>
       ) }
 
       <div style={ { display: "grid", gap: "12px" } }>
